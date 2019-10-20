@@ -40,7 +40,7 @@ class wpsc_merchant {
 	var $is_receiving = false;
 	var $purchase_id = null;
 	var $session_id = null;
-	var $received_data = array( );
+	var $received_data = array();
 	/**
 	 * This is where the cart data, like the address, country and email address is held
 	 * @var array
@@ -99,10 +99,6 @@ class wpsc_merchant {
 		$this->collate_cart();
 	}
 
-	function wpsc_merchant( $purchase_id = null, $is_receiving = false ) {
-		$this->__construct( $purchase_id, $is_receiving );
-	}
-
 	/**
 	 * collate_data method, collate purchase data, like addresses, like country
 	 * @access public
@@ -121,7 +117,7 @@ class wpsc_merchant {
 		}
 
 		$email_address       = $wpdb->get_var( "SELECT `value` FROM `" . WPSC_TABLE_CHECKOUT_FORMS . "` AS `form_field` INNER JOIN `" . WPSC_TABLE_SUBMITTED_FORM_DATA . "` AS `collected_data` ON `form_field`.`id` = `collected_data`.`form_id` WHERE `form_field`.`type` IN ( 'email' ) AND `collected_data`.`log_id` IN ( '{$purchase_id}' )" );
-		$currency_code       = $wpdb->get_var( "SELECT `code` FROM `" . WPSC_TABLE_CURRENCY_LIST . "` WHERE `id`='" . get_option( 'currency_type' ) . "' LIMIT 1" );
+		$currency_code       = WPSC_Countries::get_currency_code( get_option( 'currency_type' ) );
 		$collected_form_data = $wpdb->get_results( "SELECT `data_names`.`id`, `data_names`.`unique_name`, `collected_data`.`value` FROM `" . WPSC_TABLE_SUBMITTED_FORM_DATA . "` AS `collected_data` JOIN `" . WPSC_TABLE_CHECKOUT_FORMS . "` AS `data_names` ON `collected_data`.`form_id` = `data_names`.`id` WHERE `log_id` = '" . $purchase_id . "'", ARRAY_A );
 
 		$address_data = array(
@@ -173,7 +169,7 @@ class wpsc_merchant {
 			$has_discount = false;
 
 		$this->cart_data = array(
-			'software_name'           => 'WP e-Commerce/' . WPSC_PRESENTABLE_VERSION . '',
+			'software_name'           => 'WP eCommerce/' . WPSC_PRESENTABLE_VERSION . '',
 			'store_location'          => get_option( 'base_country' ),
 			'store_currency'          => $currency_code,
 			'is_subscription'         => false,
@@ -231,7 +227,7 @@ class wpsc_merchant {
 				"tax"                  => $cart_row['tax_charged'],
 				"quantity"             => $cart_row['quantity'],
 				"is_downloadable"      => $is_downloadable,
-				"is_capability"        => (bool)wpsc_get_cartmeta( $cart_row['id'], 'provided_capabilities', true ),
+				"is_capability"        => (bool) wpsc_get_cart_item_meta( $cart_row['id'], 'provided_capabilities', true ),
 				"is_recurring"         => $is_recurring,
 				"is_subscription"      => $is_recurring,
 				"recurring_data"       => array(
@@ -244,7 +240,7 @@ class wpsc_merchant {
 				)
 			);
 
-			$this->cart_items[] = $new_cart_item;
+			$this->cart_items[] = apply_filters( 'wpsc_merchant_collate_cart_item' , $new_cart_item, $this );
 		}
 	}
 
@@ -256,8 +252,10 @@ class wpsc_merchant {
 		global $wpdb;
 
 		$messages = wpsc_get_customer_meta( 'checkout_misc_error_messages' );
-		if ( ! is_array( $messages ) )
+
+		if ( ! is_array( $messages ) ) {
 			$messages = array();
+		}
 
 		$messages[] = $error_message;
 		wpsc_update_customer_meta( 'checkout_misc_error_messages', $messages );
@@ -280,19 +278,19 @@ class wpsc_merchant {
 	 * go to transaction results, if this changes and you extend this, your merchant module may go to the wrong place
 	 */
 	function go_to_transaction_results( $session_id ) {
-		global $wpdb, $purchase_log;
+		$purchase_log = new WPSC_Purchase_Log( $this->purchase_id );
 
 		//Now to do actions once the payment has been attempted
-		switch ($purchase_log['processed']) {
-			case 3:
+		switch ( $purchase_log->get( 'processed' ) ) {
+			case WPSC_Purchase_Log::ACCEPTED_PAYMENT:
 				// payment worked
 				do_action('wpsc_payment_successful');
 				break;
-			case 1:
+			case WPSC_Purchase_Log::INCOMPLETE_SALE:
 				// payment declined
 				do_action('wpsc_payment_failed');
 				break;
-			case 2:
+			case WPSC_Purchase_Log::ORDER_RECEIVED:
 				// something happened with the payment
 				do_action('wpsc_payment_incomplete');
 				break;
@@ -334,19 +332,16 @@ class wpsc_merchant {
 	 * @param bool   $append
 	 * @return bool  result
 	 */
-	function set_authcode($authcode, $append = false){
-		global $wpdb;
+	function set_authcode( $authcode, $append = false ){
 
-		$wpdb->show_errors();
-		if($append === false){
-			return $wpdb->update(WPSC_TABLE_PURCHASE_LOGS,array('authcode'=>$authcode), array('id'=>absint($this->purchase_id)),array('%s'), array('%d'));
-		}else{
-			$current_authcode = $wpdb->get_var( "SELECT authcode FROM `" . WPSC_TABLE_PURCHASE_LOGS . "` WHERE `sessionid` = " . absint( $this->session_id ) . " LIMIT 1" );
-			//this is overwrite
-			$new_authcode = isset($current_authcode) ? $current_authcode.'|' :'';
-			$new_authcode .= $authcode;
-			return $wpdb->update(WPSC_TABLE_PURCHASE_LOGS,array('authcode'=>$new_authcode), array('id'=>absint($this->purchase_id)),array('%s'), array('%d'));
+		$log              = new WPSC_Purchase_Log( $this->purchase_id );
+		$current_authcode = $log->get( 'authcode' );
+
+		if ( $append && ! empty( $current_authcode ) ) {
+			$authcode = $current_authcode . '|' . $authcode;
 		}
+
+		return $log->set( 'authcode', $authcode )->save();
 	}
 
 	/**
@@ -385,5 +380,3 @@ class wpsc_merchant {
 		return false;
 	}
 }
-
-?>

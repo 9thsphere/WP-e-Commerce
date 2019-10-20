@@ -34,10 +34,10 @@ class wpsc_theming {
 	 * wpsc_theming
 	 *
 	 * Construct
-	 * 
+	 *
 	 * @return
 	 */
-	function wpsc_theming() {
+	public function __construct() {
 		check_admin_referer( 'wpsc_copy_themes' );
 
 		$this->active_wp_style   = trailingslashit( get_stylesheet_directory() );
@@ -77,14 +77,14 @@ class wpsc_theming {
 	 * @return true if no templates need to be moved or false if some templates do need to be moved
 	 */
 	function files_exist() {
-		
+
 		if( empty( $this->templates_to_move ) ) {
 			$_SESSION['wpsc_theme_empty'] = true;
 			wp_redirect( admin_url('options-general.php?page=wpsc-settings&tab=presentation') );
-					
+
 		}
-		
-		
+
+
 		$results = array_diff( $this->templates_to_move, $this->list_of_templates );
 		$this->templates_to_move = $results;
 		// If theme already exists, we're set, do nothing
@@ -149,7 +149,7 @@ class wpsc_theming {
 	 * @return None
 	 */
 	function move_theme( $old, $new ) {
-		
+
 		if ( $old != WPSC_THEMES_PATH )
 			$theme_file_prefix = $this->theme_file_prefix;
 		else
@@ -164,7 +164,7 @@ class wpsc_theming {
 				if('wpsc-default.css' == $file)
 					wpsc_move_theme_images();
 				if ( in_array( $file, $this->templates_to_move ) ) {
-					if ( !strstr( $file, "functions" ) && !strstr( $file, "widget" ) ) {
+					if ( !strstr( $file, "functions" ) && !strstr( $file, 'widget' ) ) {
 						$file_data = file_get_contents( $old . "/" . $file );
 						$_SESSION['wpsc_themes_copied_results'][] = @file_put_contents( $path . "/" . $file, $file_data );
 						rename( $path . "/" . $file, $path . "/" . $theme_file_prefix . $file );
@@ -177,8 +177,20 @@ class wpsc_theming {
 		do_action( 'wpsc_move_theme' );
 	}
 }
+/**
+ * Initializes WPSC_Theming global.
+ *
+ * A relic of days gone by, an awkwardly named class intended for use in the migration of theme templates from
+ * the core theme folders into the currently active theme folder.
+ *
+ * @since  3.8.14.4
+ * @return void
+ */
+function wpsc_init_theming_global() {
+	global $wpsc_theming;
+	$wpsc_theming = new wpsc_theming();
+}
 
-if ( isset( $_REQUEST['wpsc_move_themes'] ) && !empty($_REQUEST['wpsc_move_themes']) )
-	add_action( 'admin_init', create_function( '', 'global $wpsc_theming; $wpsc_theming = new wpsc_theming();' ) );
-
-?>
+if ( isset( $_REQUEST['wpsc_move_themes'] ) && ! empty( $_REQUEST['wpsc_move_themes'] ) ) {
+	add_action( 'admin_init', 'wpsc_init_theming_global' );
+}

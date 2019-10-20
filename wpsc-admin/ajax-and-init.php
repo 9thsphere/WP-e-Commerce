@@ -6,7 +6,7 @@
  * These are the WPSC Admin AJAX functions
  *
  * @package wp-e-commerce
- * @since 3.7
+ * @since 3.7.0
  *
  * @uses update_option()                              Updates option in the database given key and value
  * @uses wp_delete_term()                             Removes term from the database
@@ -18,23 +18,12 @@
  * @uses wpsc_find_purchlog_status_name()             Finds name of given status
  */
 function wpsc_admin_ajax() {
-	global $wpdb;
 
-	if ( isset( $_POST['action'] ) && $_POST['action'] == 'product-page-order' ) {
-		$current_order = get_option( 'wpsc_product_page_order' );
-		$new_order = $_POST['order'];
-
-		if ( isset( $new_order["advanced"] ) ) {
-			$current_order["advanced"] = array_unique( explode( ',', $new_order["advanced"] ) );
-		}
-		if ( isset( $new_order["side"] ) ) {
-			$current_order["side"] = array_unique( explode( ',', $new_order["side"] ) );
-		}
-
-		update_option( 'wpsc_product_page_order', $current_order );
-		exit( print_r( $order, 1 ) );
+	if ( ! wpsc_is_store_admin() ) {
+		return;
 	}
 
+	global $wpdb;
 
 	if ( isset( $_POST['save_image_upload_state'] ) && $_POST['save_image_upload_state'] == 'true' && is_numeric( $_POST['image_upload_state'] ) ) {
 		$upload_state = (int)(bool)$_POST['image_upload_state'];
@@ -90,10 +79,18 @@ if ( isset( $_REQUEST['ajax'] ) && isset( $_REQUEST['admin'] ) && ($_REQUEST['aj
 	add_action( 'admin_init', 'wpsc_admin_ajax' );
 
 /**
- * @todo docs
+ * The function that changes the main currency in the DB
+ *
  * @uses $wpdb  WordPress database object for queries
  */
 function wpsc_change_currency() {
+
+	if ( ! wpsc_is_store_admin() ) {
+		return;
+	}
+
+	global $wpdb;
+
 	if ( is_numeric( $_POST['currencyid'] ) ) {
 		$currency_data = $wpdb->get_results( $wpdb->prepare( "SELECT `symbol`,`symbol_html`,`code` FROM `" . WPSC_TABLE_CURRENCY_LIST . "` WHERE `id`=%d LIMIT 1", $_POST['currencyid'] ), ARRAY_A );
 		$price_out = null;
@@ -113,6 +110,11 @@ if ( isset( $_REQUEST['wpsc_admin_action'] ) && ($_REQUEST['wpsc_admin_action'] 
  * @uses $wpdb  WordPress database object for queries
  */
 function wpsc_rearrange_images() {
+
+	if ( ! wpsc_is_store_admin() ) {
+		return;
+	}
+
 	global $wpdb;
 	$images = explode( ",", $_POST['order'] );
 	$product_id = absint( $_POST['product_id'] );
@@ -155,6 +157,11 @@ if ( isset( $_REQUEST['wpsc_admin_action'] ) && ($_REQUEST['wpsc_admin_action'] 
  * @uses wp_redirect()      Redirects to string given as argument
  */
 function wpsc_clean_categories() {
+
+	if ( ! wpsc_is_store_admin() ) {
+		return;
+	}
+
 	global $wpdb, $wp_rewrite;
 	$sql_query = "SELECT `id`, `name`, `active` FROM `" . WPSC_TABLE_PRODUCT_CATEGORIES . "`";
 	$sql_data = $wpdb->get_results( $sql_query, ARRAY_A );
@@ -182,8 +189,6 @@ function wpsc_clean_categories() {
 				'%d'
 			    );
 
-			$updated;
-
 		} else if ( $datarow['active'] == 0 ) {
 			$wpdb->update(
 				WPSC_TABLE_PRODUCT_CATEGORIES,
@@ -196,7 +201,6 @@ function wpsc_clean_categories() {
 				'%s',
 				'%d'
 			    );
-			$updated;
 		}
 	}
 	$wp_rewrite->flush_rules();
@@ -209,11 +213,9 @@ function wpsc_clean_categories() {
 		$sendback = add_query_arg( 'tab', $_SESSION['wpsc_settings_curr_page'], $sendback );
 	}
 
-	wp_redirect( $sendback );
+	wp_redirect( esc_url_raw( $sendback ) );
 
 	exit();
 }
 if ( isset( $_REQUEST['wpsc_admin_action'] ) && ($_REQUEST['wpsc_admin_action'] == 'clean_categories') )
 	add_action( 'admin_init', 'wpsc_clean_categories' );
-
-

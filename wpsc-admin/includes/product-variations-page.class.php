@@ -1,9 +1,15 @@
 <?php
 
+/**
+ * The Product Variations page class in the WordPress admin
+ *
+ * @package wp-e-commerce
+ */
+
 class WPSC_Product_Variations_Page {
 	private $list_table;
 	private $parent_id;
-	private $current_tab = 'manage';
+	private $current_tab;
 	private $post;
 
 	public function __construct() {
@@ -12,8 +18,18 @@ class WPSC_Product_Variations_Page {
 		$this->parent_id = absint( $_REQUEST['product_id'] );
 		set_current_screen();
 
-		if ( ! empty( $_REQUEST['tab'] ) )
+		if ( ! empty( $_REQUEST['tab'] ) ) {
 			$this->current_tab = $_REQUEST['tab'];
+		} else {
+			$args = array(
+				'post_parent' => $this->parent_id,
+				'post_type'   => 'wpsc-product',
+				'post_status' => 'any');
+
+			$number_of_variations = count(get_children($args));
+
+			$this->current_tab = ($number_of_variations > 0) ? 'manage' : 'setup';
+		}
 	}
 
 	private function merge_meta_deep( $original, $updated ) {
@@ -36,32 +52,63 @@ class WPSC_Product_Variations_Page {
 		return $original;
 	}
 
+	/*   */
 	private function save_variation_meta( $id, $data ) {
+
 		$product_meta = get_product_meta( $id, 'product_metadata', true );
-		if ( ! is_array( $product_meta ) )
+
+		if ( ! is_array( $product_meta ) ) {
 			$product_meta = array();
+		}
+
 		$product_meta = $this->merge_meta_deep( $product_meta, $data['product_metadata'] );
 
 		// convert to pound to maintain backward compat with shipping modules
-		if ( isset( $data['product_metadata']['weight'] ) || isset( $data['product_metadata']['weight_unit'] ) )
+		if ( isset( $data['product_metadata']['weight'] ) || isset( $data['product_metadata']['weight_unit'] ) ) {
 			$product_meta['weight'] = wpsc_convert_weight( $product_meta['weight'], $product_meta['weight_unit'], 'pound', true );
+		}
 
 		update_product_meta( $id, 'product_metadata', $product_meta );
 
-		if ( isset( $data['price'] ) )
+		if ( isset( $data['price'] ) ) {
 			update_product_meta( $id, 'price', wpsc_string_to_float( $data['price'] ) );
+		}
 
-		if ( isset( $data['sale_price'] ) )
-			update_product_meta( $id, 'special_price', wpsc_string_to_float( $data['sale_price'] ) );
+		if ( isset( $data['sale_price'] ) ) {
 
-		if ( isset( $data['sku'] ) )
-			update_product_meta( $id, 'sku', $data['sku'] );
+			$sale_price = wpsc_string_to_float( $data['sale_price'] );
+
+			if ( is_numeric( $sale_price ) ) {
+				update_product_meta( $id, 'special_price', wpsc_string_to_float( $data['sale_price'] ) );
+			} else {
+				update_product_meta( $id, 'special_price', '' );
+			}
+		}
+
+		if ( isset( $data['sku'] ) ) {
+			update_product_meta( $id, 'sku', sanitize_text_field( $data['sku'] ) );
+		}
 
 		if ( isset( $data['stock'] ) ) {
-			if ( is_numeric( $data['stock'] ) )
-				update_product_meta( $id, 'stock', absint( $data['stock'] ) );
-			else
+			if ( is_numeric( $data['stock'] ) ) {
+				update_product_meta( $id, 'stock', (int) $data['stock'] );
+				$parent_id = wpsc_product_is_variation( $id );
+
+				if( $parent_id ) {
+					// If product is a variatio get the notification threshold from parent product
+					$parent_meta = get_product_meta( $parent_id, 'product_metadata', true );
+					$notify_limit = $parent_meta['stock_limit_notify'];
+					if ( (int) $data['stock'] > $notify_limit ) {
+						// Check if notification has been sent
+						$notify_sent = get_product_meta( $id, 'stock_limit_notify_sent', true );
+						if( ! empty( $notify_sent ) ) {
+							delete_product_meta( $id, 'stock_limit_notify_sent' );
+						}
+					}
+				}
+			} else {
 				update_product_meta( $id, 'stock', '' );
+			}
 		}
 	}
 
@@ -72,9 +119,14 @@ class WPSC_Product_Variations_Page {
 		check_admin_referer( 'wpsc_save_variations_meta', '_wpsc_save_meta_nonce' );
 		$post_type_object = get_post_type_object( 'wpsc-product' );
 		if ( ! current_user_can( $post_type_object->cap->edit_posts ) )
-			wp_die( __( 'Cheatin&#8217; uh?' ) );
+			wp_die( __( 'Cheatin&#8217; uh?', 'wp-e-commerce' ) );
 
+		/* Long-term, we should have a better saving routine here.  Can't unset these currently. *
+		/* That said, the only thing that fails hard if we can't unset it is the checkbox. */
 		foreach ( $_REQUEST['wpsc_variations'] as $id => $data ) {
+			if ( ! isset( $data['product_metadata']['no_shipping'] ) ) {
+				$data['product_metadata']['no_shipping'] = '';
+			}
 			$this->save_variation_meta( $id, $data );
 		}
 	}
@@ -96,6 +148,8 @@ class WPSC_Product_Variations_Page {
 		wp_enqueue_script( 'jquery-color' );
 		wp_enqueue_script( 'utils'        );
 		wp_enqueue_script( 'jquery-query' );
+		wp_enqueue_media( array( 'post' => absint( $_REQUEST['product_id'] ) ) );
+
 
 		$callback = "callback_tab_{$this->current_tab}";
 		if ( ! is_callable( array( $this, "callback_tab_{$this->current_tab}" ) ) )
@@ -109,14 +163,15 @@ class WPSC_Product_Variations_Page {
 
 	private function display_tabs() {
 		$tabs = array(
-			'manage'   => _x( 'Manage', 'manage product variations', 'wpsc' ),
-			'setup' => __( 'Setup', 'wpsc' ),
+			'manage'   => _x( 'Manage', 'manage product variations', 'wp-e-commerce' ),
+			'setup' => __( 'Setup', 'wp-e-commerce' ),
 		);
-		echo '<ul class="wpsc-product-variations-tabs">';
+
+		echo '<ul id="wpsc-product-variations-tabs" class="category-tabs">';
 		foreach ( $tabs as $tab => $title ) {
-			$class = ( $tab == $this->current_tab ) ? ' class="active"' : '';
+			$class = ( $tab == $this->current_tab ) ? ' class="tabs"' : '';
 			$item = '<li' . $class . '>';
-			$item .= '<a href="' . add_query_arg( 'tab', $tab ) . '">' . esc_html( $title ) . '</a></li>';
+			$item .= '<a href="' . esc_url( add_query_arg( 'tab', $tab ) ) . '">' . esc_html( $title ) . '</a></li> ';
 			echo $item;
 		}
 		echo '</ul>';
@@ -148,7 +203,7 @@ class WPSC_Product_Variations_Page {
 			'_wp_http_referer',
 			'updated',
 		) );
-		wp_redirect( add_query_arg( 'tab', 'manage', $sendback ) );
+		wp_redirect( esc_url_raw( add_query_arg( 'tab', 'manage', $sendback ) ) );
 		exit;
 	}
 
@@ -169,14 +224,14 @@ class WPSC_Product_Variations_Page {
 		$trashed = 0;
 		foreach( (array) $post_ids as $post_id ) {
 			if ( !current_user_can( $post_type_object->cap->delete_post, $post_id ) )
-				wp_die( __( 'You are not allowed to move this item to the Trash.' ) );
+				wp_die( __( 'You are not allowed to move this item to the Trash.', 'wp-e-commerce' ) );
 
 			if ( !wp_trash_post( $post_id ) )
-				wp_die( __( 'Error in moving to Trash.' ) );
+				wp_die( __( 'Error in moving to Trash.', 'wp-e-commerce' ) );
 
 			$trashed++;
 		}
-		return add_query_arg( array( 'trashed' => $trashed, 'ids' => join( ',', $post_ids ) ) );
+		return esc_url( add_query_arg( array( 'trashed' => $trashed, 'ids' => join( ',', $post_ids ) ) ) );
 	}
 
 	public function process_bulk_action_untrash( $post_ids ) {
@@ -184,14 +239,14 @@ class WPSC_Product_Variations_Page {
 		$untrashed = 0;
 		foreach( (array) $post_ids as $post_id ) {
 			if ( ! current_user_can( $post_type_object->cap->delete_post, $post_id ) )
-				wp_die( __( 'You are not allowed to restore this item from the Trash.' ) );
+				wp_die( __( 'You are not allowed to restore this item from the Trash.', 'wp-e-commerce' ) );
 
 			if ( !wp_untrash_post( $post_id ) )
-				wp_die( __( 'Error in restoring from Trash.' ) );
+				wp_die( __( 'Error in restoring from Trash.', 'wp-e-commerce' ) );
 
 			$untrashed++;
 		}
-		return add_query_arg( 'untrashed', $untrashed );
+		return esc_url( add_query_arg( 'untrashed', $untrashed ) );
 	}
 
 	public function process_bulk_action_delete( $post_ids ) {
@@ -201,18 +256,18 @@ class WPSC_Product_Variations_Page {
 			$post_del = & get_post( $post_id );
 
 			if ( ! current_user_can( $post_type_object->cap->delete_post, $post_id ) )
-				wp_die( __( 'You are not allowed to delete this item.' ) );
+				wp_die( __( 'You are not allowed to delete this item.', 'wp-e-commerce' ) );
 
 			if ( $post_del->post_type == 'attachment' ) {
 				if ( ! wp_delete_attachment( $post_id ) )
-					wp_die( __( 'Error in deleting...' ) );
+					wp_die( __( 'Error in deleting...', 'wp-e-commerce' ) );
 			} else {
 				if ( ! wp_delete_post( $post_id ) )
-					wp_die( __( 'Error in deleting...' ) );
+					wp_die( __( 'Error in deleting...', 'wp-e-commerce' ) );
 			}
 			$deleted++;
 		}
-		return add_query_arg( 'deleted', $deleted );
+		return esc_url( add_query_arg( 'deleted', $deleted ) );
 	}
 
 	public function process_bulk_action_hide( $post_ids ) {
@@ -224,7 +279,7 @@ class WPSC_Product_Variations_Page {
 			) );
 			$updated ++;
 		}
-		return add_query_arg( 'updated', $updated );
+		return esc_url( add_query_arg( 'updated', $updated ) );
 	}
 
 	public function process_bulk_action_show( $post_ids ) {
@@ -236,7 +291,7 @@ class WPSC_Product_Variations_Page {
 			) );
 			$updated ++;
 		}
-		return add_query_arg( 'updated', $updated );
+		return esc_url( add_query_arg( 'updated', $updated ) );
 	}
 
 	private function save_bulk_edited_items() {
@@ -272,12 +327,18 @@ class WPSC_Product_Variations_Page {
 				unset( $data['product_metadata']['weight_unit'] );
 			}
 
-			foreach ( array( 'height', 'width', 'length' ) as $field ) {
-				if ( empty( $fields['measurements'][$field] ) ) {
+			if ( empty( $fields['measurements']['dimensions'] ) ) {
+				foreach ( array( 'height', 'width', 'length' ) as $field ) {
 					unset( $data['product_metadata']['dimensions'][$field] );
 					unset( $data['product_metadata']['dimensions'][$field . '_unit'] );
 				}
+			} else {
+				foreach ( array( 'height', 'width', 'length' ) as $field ) {
+					$data['product_metadata']['dimensions'][$field . '_unit'] = "cm";
+				}
 			}
+
+			unset( $data['product_metadata']['dimensions_unit'] );
 		}
 
 		unset( $data['post'] );
@@ -298,7 +359,7 @@ class WPSC_Product_Variations_Page {
 			'last_paged'
 		), $sendback );
 		$sendback = add_query_arg( 'updated', count( $ids ), $sendback );
-		wp_redirect( $sendback );
+		wp_redirect( esc_url_raw( $sendback ) );
 		exit;
 	}
 
@@ -342,7 +403,7 @@ class WPSC_Product_Variations_Page {
 		_wpsc_refresh_parent_product_terms( $this->parent_id );
 		_wpsc_add_refresh_variation_parent_term_hooks();
 		if ( $current_action != 'edit' ) {
-			wp_redirect( $sendback );
+			wp_redirect( esc_url_raw( $sendback ) );
 			exit;
 		}
 	}

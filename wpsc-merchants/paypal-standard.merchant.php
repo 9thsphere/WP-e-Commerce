@@ -9,21 +9,19 @@
   * for internal operations.
   */
 $nzshpcrt_gateways[$num] = array(
-	'name' => __( 'PayPal Payments Standard 2.0', 'wpsc' ),
+	'name' => __( 'PayPal Payments Standard 2.0', 'wp-e-commerce' ),
 	'api_version' => 2.0,
-	'image' => WPSC_URL . '/images/paypal.gif',
+	'image' => 'https://www.paypalobjects.com/webstatic/en_US/i/buttons/pp-acceptance-small.png',
 	'class_name' => 'wpsc_merchant_paypal_standard',
 	'has_recurring_billing' => true,
 	'wp_admin_cannot_cancel' => true,
-	'display_name' => __( 'PayPal Payments Standard', 'wpsc' ),
+	'display_name' => __( 'PayPal Payments Standard', 'wp-e-commerce' ),
 	'requirements' => array(
 		/// so that you can restrict merchant modules to PHP 5, if you use PHP 5 features
 		'php_version' => 4.3,
 		 /// for modules that may not be present, like curl
 		'extra_modules' => array()
 	),
-
-	// this may be legacy, not yet decided
 	'internalname' => 'wpsc_merchant_paypal_standard',
 
 	// All array members below here are legacy, and use the code in paypal_multiple.php
@@ -31,12 +29,10 @@ $nzshpcrt_gateways[$num] = array(
 	'submit_function' => 'submit_paypal_multiple',
 	'payment_type' => 'paypal',
 	'supported_currencies' => array(
-		'currency_list' =>  array('AUD', 'BRL', 'CAD', 'CHF', 'CZK', 'DKK', 'EUR', 'GBP', 'HKD', 'HUF', 'ILS', 'JPY', 'MXN', 'MYR', 'NOK', 'NZD', 'PHP', 'PLN', 'SEK', 'SGD', 'THB', 'TWD', 'USD'),
+		'currency_list' =>  array('AUD', 'BRL', 'CAD', 'CZK', 'DKK', 'EUR', 'HKD', 'HUF', 'ILS', 'JPY', 'MYR', 'MXN', 'NOK', 'NZD', 'PHP', 'PLN', 'GBP', 'RUB', 'SGD', 'SEK', 'CHF', 'TWD', 'THB', 'TRY', 'USD'),
 		'option_name' => 'paypal_curcode'
 	)
 );
-
-
 
 /**
 	* WP eCommerce PayPal Standard Merchant Class
@@ -50,9 +46,12 @@ $nzshpcrt_gateways[$num] = array(
 class wpsc_merchant_paypal_standard extends wpsc_merchant {
   var $name = '';
   var $paypal_ipn_values = array();
+  var $rate;
+  var $local_currency_code;
+  var $paypal_currency_code;
 
   function __construct( $purchase_id = null, $is_receiving = false ) {
-	$this->name = __( 'PayPal Payments Standard', 'wpsc' );
+	$this->name = __( 'PayPal Payments Standard', 'wp-e-commerce' );
 	parent::__construct( $purchase_id, $is_receiving );
   }
 
@@ -64,23 +63,23 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 		$this->collected_gateway_data = $this->_construct_value_array();
 	}
 
-	function convert( $amt ){
+	function convert( $amt ) {
 		if ( empty( $this->rate ) ) {
 			$this->rate = 1;
 			$paypal_currency_code = $this->get_paypal_currency_code();
 			$local_currency_code = $this->get_local_currency_code();
 			if ( $local_currency_code != $paypal_currency_code ) {
-				$curr=new CURRENCYCONVERTER();
+				$curr = new CURRENCYCONVERTER();
 				$this->rate = $curr->convert( 1, $paypal_currency_code, $local_currency_code );
 			}
 		}
+
 		return $this->format_price( $amt * $this->rate );
 	}
 
 	function get_local_currency_code() {
 		if ( empty( $this->local_currency_code ) ) {
-			global $wpdb;
-			$this->local_currency_code = $wpdb->get_var( $wpdb->prepare( "SELECT `code` FROM `".WPSC_TABLE_CURRENCY_LIST."` WHERE `id` = %d  LIMIT 1", get_option( 'currency_type' ) ) );
+			$this->local_currency_code = WPSC_Countries::get_currency_code( get_option( 'currency_type' ) );
 		}
 
 		return $this->local_currency_code;
@@ -113,21 +112,20 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 
 		$return_url = add_query_arg( 'sessionid', $this->cart_data['session_id'], $this->cart_data['transaction_results_url'] );
 
-		if ( $buy_now )
+		if ( $buy_now ) {
 			$return_url = add_query_arg( 'wpsc_buy_now_return', 1, $return_url );
+		}
 
 		// Store settings to be sent to paypal
 		$paypal_vars += array(
-			'business' => get_option( 'paypal_multiple_business' ),
-			'return' => $return_url,
+			'business'      => get_option( 'paypal_multiple_business' ),
+			'return'        => $return_url,
 			'cancel_return' => $this->cart_data['transaction_results_url'],
-			'rm' => '2',
+			'rm'            => '2',
 			'currency_code' => $this->get_paypal_currency_code(),
-			'lc' => $this->cart_data['store_currency'],
-			'bn' => $this->cart_data['software_name'],
-
-			'no_note' => '1',
-			'charset' => 'utf-8',
+			'lc'            => $this->cart_data['store_currency'],
+			'no_note'       => '1',
+			'charset'       => 'utf-8',
 		);
 
 		// IPN data
@@ -139,29 +137,34 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 				'notify_url' => $notify_url,
 			);
 		}
+		
+		// Customer details
+		$paypal_vars += array(
+			'email'      => $this->cart_data['email_address'],
+			'first_name' => $this->cart_data['billing_address']['first_name'],
+			'last_name'  => $this->cart_data['billing_address']['last_name'],
+			'address1'   => isset( $this->cart_data['billing_address']['address'] ) ? $this->cart_data['billing_address']['address'] : '',
+			'city'       => isset( $this->cart_data['billing_address']['city'] ) ? $this->cart_data['billing_address']['city'] : '',
+			'state'      => isset( $this->cart_data['billing_address']['state'] ) ? $this->cart_data['billing_address']['state'] : '',
+			'zip'        => isset( $this->cart_data['billing_address']['post_code'] ) ? $this->cart_data['billing_address']['post_code'] : '',
+			'country'    => isset( $this->cart_data['billing_address']['country'] ) ? $this->cart_data['billing_address']['country'] : '',
+		);
 
 		// Shipping
 		if ( (bool) get_option( 'paypal_ship' ) && ! $buy_now ) {
-			$paypal_vars += array(
-				'address_override' => '1',
-				'no_shipping' => '0',
-			);
 
-			// Customer details
 			$paypal_vars += array(
-				'email' => $this->cart_data['email_address'],
-				'first_name' => $this->cart_data['shipping_address']['first_name'],
-				'last_name' => $this->cart_data['shipping_address']['last_name'],
-				'address1' => $this->cart_data['shipping_address']['address'],
-				'city' => $this->cart_data['shipping_address']['city'],
-				'country' => $this->cart_data['shipping_address']['country'],
-				'zip' => $this->cart_data['shipping_address']['post_code'],
-				'state' => $this->cart_data['shipping_address']['state'],
+				'address_override' => get_option( 'address_override' ),
+				'no_shipping'      => '0',
 			);
 
 			if ( $paypal_vars['country'] == 'UK' ) {
 				$paypal_vars['country'] = 'GB';
 			}
+		} else {
+			$paypal_vars += array(
+				'no_shipping' => '1',
+			);
 		}
 
 		// Order settings to be sent to paypal
@@ -169,8 +172,9 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 			'invoice' => $this->cart_data['session_id']
 		);
 
-		if ( $buy_now )
+		if ( $buy_now ) {
 			$paypal_vars['custom'] = 'buy_now';
+		}
 
 		// Two cases:
 		// - We're dealing with a subscription
@@ -259,7 +263,7 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 			$coupon = wpsc_get_customer_meta( 'coupon' );
 			if ( $coupon ) {
 				$coupon = new wpsc_coupons( $coupon );
-				$free_shipping = $coupon->is_percentage == '2';
+				$free_shipping = $coupon->is_free_shipping();
 			}
 
 			if ( $this->cart_data['has_discounts'] && $free_shipping )
@@ -318,7 +322,7 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 					}
 
 				} else {
-					$paypal_vars['item_name_'.$i] = __( "Your Shopping Cart", 'wpsc' );
+					$paypal_vars['item_name_'.$i] = __( "Your Shopping Cart", 'wp-e-commerce' );
 					$paypal_vars['amount_'.$i] = $this->convert( $this->cart_data['total_price'] ) - $this->convert( $this->cart_data['base_shipping'] );
 					$paypal_vars['quantity_'.$i] = 1;
 					$paypal_vars['shipping_'.$i] = 0;
@@ -326,7 +330,8 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 					$paypal_vars['handling_'.$i] = 0;
 				}
 
-				$paypal_vars['tax_cart'] = $this->convert( $tax_total );
+				$paypal_vars['tax_cart'] = $aggregate ? 0 : $this->convert( $tax_total );
+
 			} else {
 				$cart_row = $this->cart_items[0];
 				$item_number = get_post_meta( $cart_row['product_id'], '_wpsc_sku', true );
@@ -339,7 +344,12 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 				);
 			}
 		}
-		return apply_filters( 'wpsc_paypal_standard_post_data', $paypal_vars );
+
+		$paypal_vars = apply_filters( 'wpsc_paypal_standard_post_data', $paypal_vars );
+
+		$paypal_vars['bn'] = 'WPeC_Cart_WPS';
+
+		return $paypal_vars;
 	}
 
 	/**
@@ -368,7 +378,7 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 		}
 
 		if ( defined( 'WPSC_ADD_DEBUG_PAGE' ) && WPSC_ADD_DEBUG_PAGE ) {
-			echo "<a href='" . esc_url( $redirect ) . "'>" . __( "Test the URL here", 'wpsc' ) . "</a>";
+			echo "<a href='" . esc_url( $redirect ) . "'>" . __( "Test the URL here", 'wp-e-commerce' ) . "</a>";
 			echo "<pre>" . print_r( $this->collected_gateway_data, true ) . "</pre>";
 			exit();
 		} else {
@@ -379,27 +389,31 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 		}
 	}
 
-
 	/**
 	* parse_gateway_notification method, receives data from the payment gateway
 	* @access private
 	*/
 	function parse_gateway_notification() {
+
 		/// PayPal first expects the IPN variables to be returned to it within 30 seconds, so we do this first.
 		$paypal_url = get_option( 'paypal_multiple_url' );
-		$received_values = array();
+
+		$received_values        = array();
 		$received_values['cmd'] = '_notify-validate';
-		$received_values += stripslashes_deep( $_REQUEST );
+		$received_values       += stripslashes_deep( $_REQUEST );
+
 		$options = array(
-			'timeout' => 20,
-			'body' => $received_values,
-			'user-agent' => ( 'WP e-Commerce/' . WPSC_PRESENTABLE_VERSION )
+			'timeout'     => 20,
+			'body'        => $received_values,
+			'httpversion' => '1.1',
+			'user-agent'  => ( 'WP eCommerce/' . WPSC_PRESENTABLE_VERSION )
 		);
 
-		$response = wp_remote_post( $paypal_url, $options );
+		$response = wp_safe_remote_post( $paypal_url, $options );
+
 		if ( 'VERIFIED' == $response['body'] ) {
 			$this->paypal_ipn_values = $received_values;
-			$this->session_id = $received_values['invoice'];
+			$this->session_id        = $received_values['invoice'];
 		} else {
 			exit( "IPN Request Failure" );
 		}
@@ -409,8 +423,10 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 		global $wpdb;
 
 		$purchase_log = new WPSC_Purchase_Log( $this->cart_data['session_id'], 'sessionid' );
-		if ( ! $purchase_log->exists() )
+
+		if ( ! $purchase_log->exists() ) {
 			return;
+		}
 
 		// get all active form fields and organize them based on id and unique_name, because we're only
 		// importing fields relevant to checkout fields that have unique name
@@ -420,7 +436,7 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 
 		foreach ( $form_fields_results as $row ) {
 			if ( ! empty( $row->unique_name ) )
-				$form_fields[$row->id] = $row->unique_name;
+				$form_fields[ $row->id ] = $row->unique_name;
 		}
 
 		$purchase_log_id = $purchase_log->get( 'id' );
@@ -443,15 +459,18 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 			// if the corresponding checkout field is "active", prepare the data array that will
 			// get passed into $wpdb->insert()
 			foreach ( $field_mapping as $key => $value ) {
+
 				$unique_name = $type . $key;
-				$id = array_search( $unique_name, $form_fields );
-				if ( $id === false || ! isset( $this->paypal_ipn_values[$value] ) )
+				$id          = array_search( $unique_name, $form_fields );
+
+				if ( $id === false || ! isset( $this->paypal_ipn_values[ $value ] ) ) {
 					continue;
+				}
 
 				$inserts[] = array(
 					'log_id'  => $purchase_log_id,
 					'form_id' => $id,
-					'value'   => $this->paypal_ipn_values[$value],
+					'value'   => $this->paypal_ipn_values[ $value ],
 				);
 			}
 		}
@@ -477,7 +496,8 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 	function process_gateway_notification() {
 		global $wpdb;
 
-		$status = false;
+		$status = 1;
+
 		switch ( strtolower( $this->paypal_ipn_values['payment_status'] ) ) {
 			case 'pending':
 				$status = 2;
@@ -491,11 +511,16 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 		}
 
 		do_action( 'wpsc_paypal_standard_ipn', $this->paypal_ipn_values, $this );
+
 		$paypal_email = strtolower( get_option( 'paypal_multiple_business' ) );
 
-	  // Compare the received store owner email address to the set one
+		if ( ! $this->is_valid_ipn_response() ) {
+			return;
+		}
+
+		// Compare the received store owner email address to the set one
 		if ( strtolower( $this->paypal_ipn_values['receiver_email'] ) == $paypal_email || strtolower( $this->paypal_ipn_values['business'] ) == $paypal_email ) {
-			switch ($this->paypal_ipn_values['txn_type']) {
+			switch ( $this->paypal_ipn_values['txn_type'] ) {
 				case 'cart':
 				case 'express_checkout':
 				case 'web_accept':
@@ -504,10 +529,14 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 						$this->import_ipn_data();
 					}
 
-					if ( $status )
+					if ( $status > 1 ) {
 						$this->set_transaction_details( $this->paypal_ipn_values['txn_id'], $status );
-					if ( in_array( $status, array( 2, 3 ) ) )
+					}
+
+					if ( in_array( $status, array( 2, 3 ) ) ) {
 						transaction_results( $this->cart_data['session_id'], false );
+					}
+
 					break;
 
 				case 'subscr_signup':
@@ -526,13 +555,14 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 
 				case 'subscr_cancel':
 					do_action( 'wpsc_paypal_standard_deactivate_subscription', $this->paypal_ipn_values['subscr_id'], $this );
+					break;
 				case 'subscr_eot':
 				case 'subscr_failed':
 					foreach ( $this->cart_items as $cart_row ) {
 						$altered_count = 0;
-						if ( (bool)$cart_row['is_recurring'] == true ) {
+						if ( (bool) $cart_row['is_recurring'] == true ) {
 							$altered_count++;
-							wpsc_update_cartmeta( $cart_row['cart_item_id'], 'is_subscribed', 0 );
+							wpsc_update_cart_item_meta( $cart_row['cart_item_id'], 'is_subscribed', 0 );
 						}
 					}
 					break;
@@ -543,7 +573,30 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
 		}
 	}
 
+	public function is_valid_ipn_response() {
 
+		$valid = true;
+
+		// Validate Currency
+		if ( $this->paypal_ipn_values['mc_currency'] !== $this->get_paypal_currency_code() ) {
+			$valid = false;
+		}
+
+		$purchase_log = new WPSC_Purchase_Log( $this->cart_data['session_id'], 'sessionid' );
+
+		if ( ! $purchase_log->exists() ) {
+			$valid = false;
+		}
+
+		// Validate amount
+		// It is worth noting, there are edge cases here that may need to be addressed via filter.
+		// @link https://github.com/wp-e-commerce/WP-e-Commerce/issues/1232.
+		if ( $this->paypal_ipn_values['mc_gross'] != $this->convert( $purchase_log->get( 'totalprice' ) ) ) {
+			$valid = false;
+		}
+
+		return apply_filters( 'wpsc_paypal_standard_is_valid_ipn_response', $valid, $this );
+	}
 
 	function format_price( $price, $paypal_currency_code = null ) {
 		if ( ! isset( $paypal_currency_code ) ) {
@@ -576,37 +629,34 @@ class wpsc_merchant_paypal_standard extends wpsc_merchant {
  */
 function submit_paypal_multiple (){
 	if ( isset ( $_POST['paypal_multiple_business'] ) ) {
-		update_option( 'paypal_multiple_business', $_POST['paypal_multiple_business'] );
+		update_option( 'paypal_multiple_business', sanitize_email( $_POST['paypal_multiple_business'] ) );
 	}
 
 	if ( isset ( $_POST['paypal_multiple_url'] ) ) {
-		update_option( 'paypal_multiple_url', $_POST['paypal_multiple_url'] );
+		update_option( 'paypal_multiple_url', esc_url_raw( $_POST['paypal_multiple_url'] ) );
 	}
 
 	if ( isset ( $_POST['paypal_curcode'] ) ) {
-		update_option( 'paypal_curcode', $_POST['paypal_curcode'] );
-	}
-
-	if ( isset ( $_POST['paypal_curcode'] ) ) {
-		update_option( 'paypal_curcode', $_POST['paypal_curcode'] );
+		update_option( 'paypal_curcode', sanitize_text_field( $_POST['paypal_curcode'] ) );
 	}
 
 	if ( isset ( $_POST['paypal_ipn'] ) ) {
-		update_option( 'paypal_ipn', (int)$_POST['paypal_ipn'] );
+		update_option( 'paypal_ipn', (int) $_POST['paypal_ipn'] );
 	}
 
 	if ( isset ( $_POST['address_override'] ) ) {
-		update_option( 'address_override', (int)$_POST['address_override'] );
+		update_option( 'address_override', (int) $_POST['address_override'] );
 	}
 	if ( isset ( $_POST['paypal_ship'] ) ) {
-		update_option( 'paypal_ship', (int)$_POST['paypal_ship'] );
+		update_option( 'paypal_ship', (int) $_POST['paypal_ship'] );
 	}
 
-	if ( ! isset( $_POST['paypal_form'] ) )
+	if ( ! isset( $_POST['paypal_form'] ) ) {
 		$_POST['paypal_form'] = array();
+	}
 
-	foreach( (array)$_POST['paypal_form'] as $form => $value ) {
-		update_option( ( 'paypal_form_' . $form ), $value );
+	foreach( (array) $_POST['paypal_form'] as $form => $value ) {
+		update_option( 'paypal_form_' . $form, sanitize_text_field( $value ) );
 	}
 
 	return true;
@@ -626,23 +676,23 @@ function form_paypal_multiple() {
 
 	$account_type = get_option( 'paypal_multiple_url' );
 	$account_types = array(
-		'https://www.paypal.com/cgi-bin/webscr' => __( 'Live Account', 'wpsc' ),
-		'https://www.sandbox.paypal.com/cgi-bin/webscr' => __( 'Sandbox Account', 'wpsc' ),
+		'https://www.paypal.com/cgi-bin/webscr' => __( 'Live Account', 'wp-e-commerce' ),
+		'https://www.sandbox.paypal.com/cgi-bin/webscr' => __( 'Sandbox Account', 'wp-e-commerce' ),
 	);
 
 	$output = "
 	<tr>
-		<td>" . __( 'Username:', 'wpsc' ) . "</td>
+		<td>" . __( 'Username:', 'wp-e-commerce' ) . "</td>
 		<td>
 			<input type='text' size='40' value='" . get_option( 'paypal_multiple_business') . "' name='paypal_multiple_business' />
 			<p class='description'>
-				" . __( 'This is your PayPal email address.', 'wpsc' ) . "
+				" . __( 'This is your PayPal email address.', 'wp-e-commerce' ) . "
 			</p>
 		</td>
 	</tr>
 
 	<tr>
-		<td>" . __( 'Account Type:', 'wpsc' ) . "</td>
+		<td>" . __( 'Account Type:', 'wp-e-commerce' ) . "</td>
 		<td>
 			<select name='paypal_multiple_url'>\n";
 
@@ -653,7 +703,7 @@ function form_paypal_multiple() {
 	$output .= "
 			</select>
 			<p class='description'>
-				" . __( 'If you have a PayPal developers Sandbox account please use Sandbox mode, if you just have a standard PayPal account then you will want to use Live mode.', 'wpsc' ) . "
+				" . __( 'If you have a PayPal developers Sandbox account, please use Sandbox mode. If you just have a standard PayPal account, then you will want to use Live mode.', 'wp-e-commerce' ) . "
 			</p>
 		</td>
 	</tr>\n";
@@ -701,39 +751,39 @@ function form_paypal_multiple() {
 	}
 	$output .= "
 	<tr>
-		<td>" . __( "IPN", 'wpsc' ) . ":</td>
+		<td>" . __( "IPN", 'wp-e-commerce' ) . ":</td>
 		<td>
-			<input type='radio' value='1' name='paypal_ipn' id='paypal_ipn1' " . $paypal_ipn1 . " /> <label for='paypal_ipn1'>" . __( 'Yes', 'wpsc' ) . "</label> &nbsp;
-			<input type='radio' value='0' name='paypal_ipn' id='paypal_ipn2' " . $paypal_ipn2 . " /> <label for='paypal_ipn2'>" . __( 'No', 'wpsc' ) . "</label>
+			<input type='radio' value='1' name='paypal_ipn' id='paypal_ipn1' " . $paypal_ipn1 . " /> <label for='paypal_ipn1'>" . __( 'Yes', 'wp-e-commerce' ) . "</label> &nbsp;
+			<input type='radio' value='0' name='paypal_ipn' id='paypal_ipn2' " . $paypal_ipn2 . " /> <label for='paypal_ipn2'>" . __( 'No', 'wp-e-commerce' ) . "</label>
 			<p class='description'>
-				" . __( "IPN (instant payment notification) will automatically update your sales logs to 'Accepted payment' when a customers payment is successful. For IPN to work you also need to have IPN turned on in your Paypal settings. If it is not turned on, the sales sill remain as 'Order Pending' status until manually changed. It is highly recommend using IPN, especially if you are selling digital products.", 'wpsc' ) . "
+				" . __( "IPN (instant payment notification) will automatically update your sales logs to 'Accepted payment' when a customer's payment is successful. For IPN to work you also need to have IPN turned on in your PayPal settings. If it is not turned on, the sales will remain as 'Order Pending' status until manually changed. It is highly recommended using IPN, especially if you are selling digital products.", 'wp-e-commerce' ) . "
 			</p>
 		</td>
 	</tr>
 	<tr>
-		<td style='padding-bottom: 0px;'>" . __( "Send shipping details", 'wpsc' ) . "</td>
+		<td style='padding-bottom: 0px;'>" . __( "Send shipping details", 'wp-e-commerce' ) . "</td>
 		<td style='padding-bottom: 0px;'>
-			<input type='radio' value='1' name='paypal_ship' id='paypal_ship1' " . $paypal_ship1 . " /> <label for='paypal_ship1'>" . __( 'Yes', 'wpsc' ) . "</label> &nbsp;
-			<input type='radio' value='0' name='paypal_ship' id='paypal_ship2' " . $paypal_ship2 . " /> <label for='paypal_ship2'>" . __( 'No', 'wpsc' ) . "</label>
+			<input type='radio' value='1' name='paypal_ship' id='paypal_ship1' " . $paypal_ship1 . " /> <label for='paypal_ship1'>" . __( 'Yes', 'wp-e-commerce' ) . "</label> &nbsp;
+			<input type='radio' value='0' name='paypal_ship' id='paypal_ship2' " . $paypal_ship2 . " /> <label for='paypal_ship2'>" . __( 'No', 'wp-e-commerce' ) . "</label>
 			<p class='description'>
-				" . __( "Note: If your checkout page does not have a shipping details section, or if you don't want to send Paypal shipping information. You should change Send shipping details option to No.", 'wpsc' ) . "
+				" . __( "Note: If your checkout page does not have a shipping details section, or if you don't want to send PayPal shipping information, you should change the Send shipping details option to 'No'.", 'wp-e-commerce' ) . "
 			</p>
 		</td>
 	</tr>
 	<tr>
 		<td>
-			" . __( 'Address Override:', 'wpsc' ) . "
+			" . __( 'Address Override:', 'wp-e-commerce' ) . "
 		</td>
 		<td>
-			<input type='radio' value='1' name='address_override' id='address_override1' " . $address_override1 . " /> <label for='address_override1'>" . __( 'Yes', 'wpsc' ) . "</label> &nbsp;
-			<input type='radio' value='0' name='address_override' id='address_override2' " . $address_override2 . " /> <label for='address_override2'>" . __( 'No', 'wpsc' ) . "</label>
+			<input type='radio' value='1' name='address_override' id='address_override1' " . $address_override1 . " /> <label for='address_override1'>" . __( 'Yes', 'wp-e-commerce' ) . "</label> &nbsp;
+			<input type='radio' value='0' name='address_override' id='address_override2' " . $address_override2 . " /> <label for='address_override2'>" . __( 'No', 'wp-e-commerce' ) . "</label>
 			<p class='description'>
-				" . __( "This setting affects your PayPal purchase log. If your customers already have a PayPal account PayPal will try to populate your PayPal Purchase Log with their PayPal address. This setting tries to replace the address in the PayPal purchase log with the Address customers enter on your Checkout page.", 'wpsc' ) . "
+				" . __( "This setting affects your PayPal purchase log. If your customers already have a PayPal account, PayPal will try to populate your PayPal Purchase Log with their PayPal address. This setting tries to replace the address in the PayPal purchase log with the address customers enter on your Checkout page.", 'wp-e-commerce' ) . "
 			</p>
 		</td>
 	</tr>\n";
 
-	$store_currency_data = $wpdb->get_row( $wpdb->prepare( "SELECT `code`, `currency` FROM `".WPSC_TABLE_CURRENCY_LIST."` WHERE `id` IN (%d)", get_option( 'currency_type' ) ), ARRAY_A );
+	$store_currency_data = WPSC_Countries::get_currency_data( get_option( 'currency_type' ), true );
 	$current_currency = get_option('paypal_curcode');
 	if ( ( $current_currency == '' ) && in_array( $store_currency_data['code'], $wpsc_gateways['wpsc_merchant_paypal_standard']['supported_currencies']['currency_list'] ) ) {
 		update_option( 'paypal_curcode', $store_currency_data['code'] );
@@ -745,33 +795,32 @@ function form_paypal_multiple() {
 		<tr>
 			<td>
 			</td>
-			<td><strong class='form_group'>" . __( 'Currency Converter', 'wpsc' ) . "</td>
+			<td><strong class='form_group'>" . __( 'Currency Converter', 'wp-e-commerce' ) . "</td>
 		</tr>
 		<tr>
 			<td>
 			</td>
 			<td>
-			".sprintf( __( 'Your website uses <strong>%s</strong>. This currency is not supported by PayPal, please  select a currency using the drop down menu below. Buyers on your site will still pay in your local currency however we will send the order through to Paypal using the currency you choose below.', 'wpsc' ), $store_currency_data['currency'] )."
+			".sprintf( __( 'Your website uses <strong>%s</strong>. This currency is not supported by PayPal. Please select an accepted currency using the drop down menu below. Buyers on your site will still pay in your local currency. However, we will send the order through to PayPal using the currency you choose below.', 'wp-e-commerce' ), $store_currency_data['currency'] )."
 			</td>
 		</tr>
 
 		<tr>
 			<td>
-				" . __( 'Select Currency:', 'wpsc' ) . "
+				" . __( 'Select Currency:', 'wp-e-commerce' ) . "
 			</td>
 			<td>
 				<select name='paypal_curcode'>\n";
 
 		$paypal_currency_list = array_map( 'esc_sql', $wpsc_gateways['wpsc_merchant_paypal_standard']['supported_currencies']['currency_list'] );
-
-		$currency_list = $wpdb->get_results( "SELECT DISTINCT `code`, `currency` FROM `".WPSC_TABLE_CURRENCY_LIST."` WHERE `code` IN ('" . implode( "','", $paypal_currency_list ) . "')", ARRAY_A );
+		$currency_list = WPSC_Countries::get_currencies( true );
 
 		foreach ( $currency_list as $currency_item ) {
 			$selected_currency = '';
 			if ( $current_currency == $currency_item['code'] ) {
 				$selected_currency = "selected='selected'";
 			}
-			$output .= "<option " . $selected_currency . " value='{$currency_item['code']}'>{$currency_item['currency']}</option>";
+			$output .= "<option " . $selected_currency . " value='{$currency_item['code']}'>{$currency_item['name']}</option>";
 		}
 		$output .= "
 				</select>
@@ -779,87 +828,89 @@ function form_paypal_multiple() {
 		</tr>\n";
 	}
 
+	if ( get_option( 'paypal_form_first_name', false ) ) {
 
-$output .= "
-	<tr>
-		<td colspan='2'>
-			<strong class='form_group'>" . __( 'Forms Sent to Gateway', 'wpsc' ) . "</strong>
-		</td>
-	</tr>
+		$output .= "
+		<tr>
+			<td colspan='2'>
+				<strong class='form_group'>" . __( 'Forms Sent to Gateway', 'wp-e-commerce' ) . "</strong>
+			</td>
+		</tr>
 
-	<tr>
-		<td>" . __( 'First Name Field', 'wpsc' ) . "</td>
-		<td>
-			<select name='paypal_form[first_name]'>
-			" . nzshpcrt_form_field_list( get_option( 'paypal_form_first_name' ) ) . "
-			</select>
-		</td>
-	</tr>
-	<tr>
-		<td>" . __( 'Last Name Field', 'wpsc' ) . "</td>
-		<td>
-			<select name='paypal_form[last_name]'>
-			" . nzshpcrt_form_field_list( get_option( 'paypal_form_last_name' ) ) . "
-			</select>
-		</td>
-	</tr>
-	<tr>
-		<td>
-		" . __( 'Address Field', 'wpsc' ) . "
-		</td>
-		<td>
-			<select name='paypal_form[address]'>
-			" . nzshpcrt_form_field_list( get_option( 'paypal_form_address' ) ) . "
-			</select>
-		</td>
-	</tr>
-	<tr>
-		<td>
-		" . __( 'City Field', 'wpsc' ) . "
-		</td>
-		<td>
-			<select name='paypal_form[city]'>
-			" . nzshpcrt_form_field_list( get_option( 'paypal_form_city' ) ) . "
-			</select>
-		</td>
-	</tr>
-	<tr>
-		<td>
-		" . __( 'State Field', 'wpsc' ) . "
-		</td>
-		<td>
-			<select name='paypal_form[state]'>
-			" . nzshpcrt_form_field_list( get_option( 'paypal_form_state' ) ) . "
-			</select>
-		</td>
-	</tr>
-	<tr>
-		<td>
-		" . __( 'Postal / ZIP Code Field', 'wpsc' ) . "
-		</td>
-		<td>
-			<select name='paypal_form[post_code]'>
-			".nzshpcrt_form_field_list(get_option('paypal_form_post_code'))."
-			</select>
-		</td>
-	</tr>
-	<tr>
-		<td>
-		" . __( 'Country Field', 'wpsc' ) . "
-		</td>
-		<td>
-			<select name='paypal_form[country]'>
-			" . nzshpcrt_form_field_list( get_option( 'paypal_form_country' ) ) . "
-			</select>
-		</td>
-	</tr>
-	<tr>
-		<td colspan='2'>
-			<p class='description'>
-			" . sprintf( __( "For more help configuring Paypal Standard, please read our documentation <a href='%s'>here</a>", 'wpsc' ), esc_url( 'http://docs.getshopped.org/wiki/documentation/payments/paypal-payments-standard' ) ) . "
-			</p>
-		</td>
-	</tr>\n";
+		<tr>
+			<td>" . __( 'First Name Field', 'wp-e-commerce' ) . "</td>
+			<td>
+				<select name='paypal_form[first_name]'>
+				" . nzshpcrt_form_field_list( get_option( 'paypal_form_first_name' ) ) . "
+				</select>
+			</td>
+		</tr>
+		<tr>
+			<td>" . __( 'Last Name Field', 'wp-e-commerce' ) . "</td>
+			<td>
+				<select name='paypal_form[last_name]'>
+				" . nzshpcrt_form_field_list( get_option( 'paypal_form_last_name' ) ) . "
+				</select>
+			</td>
+		</tr>
+		<tr>
+			<td>
+			" . __( 'Address Field', 'wp-e-commerce' ) . "
+			</td>
+			<td>
+				<select name='paypal_form[address]'>
+				" . nzshpcrt_form_field_list( get_option( 'paypal_form_address' ) ) . "
+				</select>
+			</td>
+		</tr>
+		<tr>
+			<td>
+			" . __( 'City Field', 'wp-e-commerce' ) . "
+			</td>
+			<td>
+				<select name='paypal_form[city]'>
+				" . nzshpcrt_form_field_list( get_option( 'paypal_form_city' ) ) . "
+				</select>
+			</td>
+		</tr>
+		<tr>
+			<td>
+			" . __( 'State Field', 'wp-e-commerce' ) . "
+			</td>
+			<td>
+				<select name='paypal_form[state]'>
+				" . nzshpcrt_form_field_list( get_option( 'paypal_form_state' ) ) . "
+				</select>
+			</td>
+		</tr>
+		<tr>
+			<td>
+			" . __( 'Postal / ZIP Code Field', 'wp-e-commerce' ) . "
+			</td>
+			<td>
+				<select name='paypal_form[post_code]'>
+				".nzshpcrt_form_field_list(get_option('paypal_form_post_code'))."
+				</select>
+			</td>
+		</tr>
+		<tr>
+			<td>
+			" . __( 'Country Field', 'wp-e-commerce' ) . "
+			</td>
+			<td>
+				<select name='paypal_form[country]'>
+				" . nzshpcrt_form_field_list( get_option( 'paypal_form_country' ) ) . "
+				</select>
+			</td>
+		</tr>
+		<tr>
+			<td colspan='2'>
+				<p class='description'>
+				" . sprintf( __( "For more help configuring PayPal Standard, please read our documentation <a href='%s'>here</a>", 'wp-e-commerce' ), esc_url( 'http://docs.wpecommerce.org/documentation/paypal-payments-standard/' ) ) . "
+				</p>
+			</td>
+		</tr>\n";
+	}
 
 	return $output;
 }

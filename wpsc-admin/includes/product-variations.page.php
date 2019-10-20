@@ -1,5 +1,5 @@
 <?php _wpsc_admin_html_begin(); ?>
-<title><?php esc_html_e( 'Manage Product Variations', 'wpsc' ); ?></title>
+<title><?php esc_html_e( 'Manage Product Variations', 'wp-e-commerce' ); ?></title>
 <script type="text/javascript">
 addLoadEvent = function(func){if(typeof jQuery!="undefined")jQuery(document).ready(func);else if(typeof wpOnload!='function'){wpOnload=func;}else{var oldonload=wpOnload;wpOnload=function(){oldonload();func();}}};
 var userSettings = {
@@ -30,13 +30,23 @@ var userSettings = {
 	}
 </style>
 </head>
-<body class="no-js wp-admin wp-core-ui wpsc-product-variation-iframe">
+<?php
+
+$admin_body_class = ' branch-' . str_replace( array( '.', ',' ), '-', floatval( $wp_version ) );
+$admin_body_class .= ' version-' . str_replace( '.', '-', preg_replace( '/^([.0-9]+).*/', '$1', $wp_version ) );
+$admin_body_class .= ' admin-color-' . sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' );
+$admin_body_class .= ' locale-' . sanitize_html_class( strtolower( str_replace( '_', '-', get_locale() ) ) );
+
+?>
+<body class="no-js wp-admin wp-core-ui wpsc-product-variation-iframe<?php echo $admin_body_class; ?>">
 <script type="text/javascript">document.body.className = document.body.className.replace('no-js','js');</script>
 
-<div id="wpsc-product-variations-wrapper">
-	<?php $this->display_tabs(); ?>
-	<div class="wpsc-product-variations-tab-content">
-		<?php $this->display_current_tab(); ?>
+<div id="post-body">
+	<div id="wpsc-product-variations-wrapper" class="categorydiv wpsc-categorydiv">
+		<?php $this->display_tabs(); ?>
+		<div class="wpsc-product-variations-tab-content tabs-panel">
+			<?php $this->display_current_tab(); ?>
+		</div>
 	</div>
 </div>
 

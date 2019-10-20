@@ -1,6 +1,6 @@
 <?php
 /**
- * WP e-Commerce Settings Page API.
+ * WP eCommerce Settings Page API.
  *
  * Third-party plugin / theme developers can add their own tabs to WPEC store settings page.
  *
@@ -202,15 +202,14 @@ final class WPSC_Settings_Page {
 	 */
 	public static function init() {
 		self::$default_tabs = array(
-			'general'      => _x( 'General'     , 'General settings tab in Settings->Store page'     , 'wpsc' ),
-			'presentation' => _x( 'Presentation', 'Presentation settings tab in Settings->Store page', 'wpsc' ),
-			'admin'        => _x( 'Admin'       , 'Admin settings tab in Settings->Store page'       , 'wpsc' ),
-			'taxes'        => _x( 'Taxes'       , 'Taxes settings tab in Settings->Store page'       , 'wpsc' ),
-			'shipping'     => _x( 'Shipping'    , 'Shipping settings tab in Settings->Store page'    , 'wpsc' ),
-			'gateway'      => _x( 'Payments'    , 'Payments settings tab in Settings->Store page'    , 'wpsc' ),
-			'checkout'     => _x( 'Checkout'    , 'Checkout settings tab in Settings->Store page'    , 'wpsc' ),
-			'marketing'    => _x( 'Marketing'   , 'Marketing settings tab in Settings->Store page'   , 'wpsc' ),
-			'import'       => _x( 'Import'      , 'Import settings tab in Settings->Store page'      , 'wpsc' )
+			'general'      => _x( 'General'     , 'General settings tab in Settings->Store page'     , 'wp-e-commerce' ),
+			'admin'        => _x( 'Admin'       , 'Admin settings tab in Settings->Store page'       , 'wp-e-commerce' ),
+			'taxes'        => _x( 'Taxes'       , 'Taxes settings tab in Settings->Store page'       , 'wp-e-commerce' ),
+			'shipping'     => _x( 'Shipping'    , 'Shipping settings tab in Settings->Store page'    , 'wp-e-commerce' ),
+			'gateway'      => _x( 'Payments'    , 'Payments settings tab in Settings->Store page'    , 'wp-e-commerce' ),
+			'checkout'     => _x( 'Checkout'    , 'Checkout settings tab in Settings->Store page'    , 'wp-e-commerce' ),
+			'marketing'    => _x( 'Marketing'   , 'Marketing settings tab in Settings->Store page'   , 'wp-e-commerce' ),
+			'import'       => _x( 'Import'      , 'Import settings tab in Settings->Store page'      , 'wp-e-commerce' )
 		);
 
 		add_action( 'wpsc_register_settings_tabs' , array( 'WPSC_Settings_Page', 'register_default_tabs'  ), 1 );
@@ -366,10 +365,13 @@ final class WPSC_Settings_Page {
 	 */
 	public function set_current_tab( $tab_id = null ) {
 		if ( ! $tab_id ) {
+			$tabs = array_keys( $this->tabs );
+
 			if ( isset( $_GET['tab'] ) && array_key_exists( $_GET['tab'], $this->tabs ) )
 				$this->current_tab_id = $_GET['tab'];
 			else
-				$this->current_tab_id = array_shift( array_keys( $this->tabs ) );
+				$this->current_tab_id = array_shift( $tabs );
+
 		} else {
 			$this->current_tab_id = $tab_id;
 		}
@@ -378,10 +380,10 @@ final class WPSC_Settings_Page {
 
 		if ( isset( $_REQUEST['wpsc_admin_action'] ) && ( $_REQUEST['wpsc_admin_action'] == 'submit_options' ) ) {
 			check_admin_referer( 'update-options', 'wpsc-update-options' );
-			
+
 			$this->save_options();
 			do_action( 'wpsc_save_' . $this->current_tab_id . '_settings', $this->current_tab );
-		
+
 			$query_args = array();
 			if ( is_callable( array( $this->current_tab, 'callback_submit_options' ) ) ) {
 				$additional_query_args = $this->current_tab->callback_submit_options();
@@ -390,11 +392,11 @@ final class WPSC_Settings_Page {
 			}
 			if ( $this->current_tab->is_update_message_displayed() ) {
 				if ( ! count( get_settings_errors() ) )
-					add_settings_error( 'wpsc-settings', 'settings_updated', __( 'Settings saved.' ), 'updated' );
+					add_settings_error( 'wpsc-settings', 'settings_updated', __( 'Settings saved.', 'wp-e-commerce' ), 'updated' );
 				set_transient( 'settings_errors', get_settings_errors(), 30 );
 				$query_args['settings-updated'] = true;
 			}
-			wp_redirect( add_query_arg( $query_args ) );
+			wp_redirect( esc_url_raw( add_query_arg( $query_args ) ) );
 			exit;
 		}
 	}
@@ -445,7 +447,8 @@ final class WPSC_Settings_Page {
 	 */
 	private function submit_url() {
 		$location = add_query_arg( 'tab', $this->current_tab_id );
-		return $location;
+		$location = apply_filters( 'wpsc_settings_page_submit_url', $location, $this, $this->current_tab );
+		return esc_url( $location );
 	}
 
 	/**
@@ -476,16 +479,16 @@ final class WPSC_Settings_Page {
 			<div id="options_<?php echo esc_attr( $this->current_tab_id ); ?>" class="tab-content">
 				<?php
 					if ( is_callable( array( $this->current_tab, 'display' ) ) ) {
+						do_action( 'wpsc_before_settings_tab', $this, $this->current_tab );
 						$this->current_tab->display();
+						do_action( 'wpsc_after_settings_tab', $this, $this->current_tab );
 					}
 				?>
 
 				<?php do_action( 'wpsc_' . $this->current_tab_id . '_settings_page' ); ?>
 				<div class="submit">
-					<input type='hidden' name='wpsc_admin_action' value='submit_options' />
-					<?php wp_nonce_field( 'update-options', 'wpsc-update-options' ); ?>
 					<?php if ( $this->current_tab->is_submit_button_displayed() ): ?>
-						<?php submit_button( __( 'Save Changes' ) ); ?>
+						<?php submit_button( __( 'Save Changes', 'wp-e-commerce' ) ); ?>
 					<?php endif ?>
 				</div>
 			</div>
@@ -507,8 +510,20 @@ final class WPSC_Settings_Page {
 			<div id="wpsc_options" class="wrap">
 				<div id="icon_card" class="icon32"></div>
 				<h2 id="wpsc-settings-page-title">
-					<?php esc_html_e( 'Store Settings', 'wpsc' ); ?>
-					<img src="<?php echo esc_url( admin_url( 'images/wpspin_light.gif' ) ); ?>" class="ajax-feedback" title="" alt="" />
+					<?php esc_html_e( 'Store Settings', 'wp-e-commerce' ); ?>
+					<?php
+						if ( current_user_can( 'customize' ) && '2.0' == get_option( 'wpsc_get_active_theme_engine' ) ) :
+							printf(
+							' <a class="page-title-action hide-if-no-customize" href="%1$s">%2$s</a>',
+							esc_url( add_query_arg( array(
+							array( 'autofocus' => array( 'panel' => 'wpsc' ) ),
+							'return' => urlencode( wp_unslash( $_SERVER['REQUEST_URI'] ) ),
+							), admin_url( 'customize.php' ) ) ),
+							__( 'Manage in Customizer' )
+							);
+						endif;
+					?>
+					<img src="<?php echo esc_url( wpsc_get_ajax_spinner() ); ?>" class="ajax-feedback" title="" alt="" />
 				</h2>
 				<?php $this->output_tabs(); ?>
 				<div id='wpsc_options_page'>
@@ -576,6 +591,12 @@ final class WPSC_Settings_Page {
 			else
 				update_option( 'wpsc_ga_tracking_id', '' );
 
+			if ( isset( $_POST['wpsc_ga_use_universal'] ) && $_POST['wpsc_ga_use_universal'] == '1' ) {
+				update_option( 'wpsc_ga_use_universal', 1 );
+			} else {
+				update_option( 'wpsc_ga_use_universal', 0 );
+			}
+
 		}
 
 		if (empty($_POST['countrylist2']) && !empty($_POST['wpsc_options']['currency_sign_location']))
@@ -632,6 +653,9 @@ final class WPSC_Settings_Page {
 					    );
 				}
 			}
+
+			WPSC_Countries::clear_cache();
+			wpsc_core_flush_temporary_data();
 		}
 		$previous_currency = get_option( 'currency_type' );
 
@@ -640,7 +664,7 @@ final class WPSC_Settings_Page {
 			$_POST['wpsc_options'] = stripslashes_deep( $_POST['wpsc_options'] );
 			// make sure stock keeping time is a number
 			if ( isset( $_POST['wpsc_options']['wpsc_stock_keeping_time'] ) ) {
-				$skt =& $_POST['wpsc_options']['wpsc_stock_keeping_time']; // I hate repeating myself
+				$skt = $_POST['wpsc_options']['wpsc_stock_keeping_time']; // I hate repeating myself
 				$skt = (float) $skt;
 				if ( $skt <= 0 || ( $skt < 1 && $_POST['wpsc_options']['wpsc_stock_keeping_interval'] == 'hour' ) ) {
 					unset( $_POST['wpsc_options']['wpsc_stock_keeping_time'] );
@@ -650,9 +674,11 @@ final class WPSC_Settings_Page {
 
 			foreach ( $_POST['wpsc_options'] as $key => $value ) {
 				if ( $value != get_option( $key ) ) {
+					
+					do_action( 'wpsc_settings_page_save_options', $key, $value );
+					
 					update_option( $key, $value );
 					$updated++;
-
 				}
 			}
 		}
@@ -691,7 +717,7 @@ final class WPSC_Settings_Page {
 
 		if ( $_POST['update_gateways'] == 'true' ) {
 
-			update_option( 'custom_shipping_options', $_POST['custom_shipping_options'] );
+			update_option( 'custom_shipping_options', array_map( 'sanitize_text_field', $_POST['custom_shipping_options'] ) );
 
 			$shipadd = 0;
 			foreach ( $GLOBALS['wpsc_shipping_modules'] as $shipping ) {
@@ -706,3 +732,12 @@ final class WPSC_Settings_Page {
 }
 
 WPSC_Settings_Page::init();
+
+add_action( 'wpsc_after_settings_tab', '_wpsc_action_after_settings_tab' );
+
+function _wpsc_action_after_settings_tab() {
+	?>
+	<input type='hidden' name='wpsc_admin_action' value='submit_options' />
+	<?php
+	wp_nonce_field( 'update-options', 'wpsc-update-options' );
+}

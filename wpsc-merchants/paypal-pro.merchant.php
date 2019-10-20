@@ -1,12 +1,12 @@
 <?php
 
 $nzshpcrt_gateways[$num] = array(
-	'name'                   => __( 'PayPal Pro 2.0', 'wpsc' ),
+	'name'                   => __( 'PayPal Pro 2.0', 'wp-e-commerce' ),
 	'api_version'            => 2.0,
 	'class_name'             => 'wpsc_merchant_paypal_pro',
 	'has_recurring_billing'  => true,
 	'wp_admin_cannot_cancel' => true,
-	'display_name'			 => __( 'PayPal Pro', 'wpsc' ),
+	'display_name'			 => __( 'PayPal Pro', 'wp-e-commerce' ),
 	'image' => WPSC_URL . '/images/cc.gif',
 	'requirements'           => array(
 		'php_version'        => 4.3,    // so that you can restrict merchant modules to PHP 5, if you use PHP 5 features
@@ -14,7 +14,7 @@ $nzshpcrt_gateways[$num] = array(
 	),
 	'form'                   => 'form_paypal_pro',
 	'submit_function'        => 'submit_paypal_pro',
-	'internalname'           => 'wpsc_merchant_paypal_pro', // this may be legacy, not yet decided
+	'internalname'           => 'wpsc_merchant_paypal_pro',
 	// All array members below here are legacy, and use the code in paypal_multiple.php
 	//	'form' => 'form_paypal_multiple',
 	//	'submit_function' => 'submit_paypal_multiple',
@@ -36,18 +36,21 @@ $nzshpcrt_gateways[$num] = array(
  */
 class wpsc_merchant_paypal_pro extends wpsc_merchant {
 
-	var $name              = '';
-	var $paypal_ipn_values = array( );
+	public $name                 = '';
+	public $paypal_ipn_values    = array();
+	public $local_currency_code  = '';
+	public $paypal_currency_code = '';
+	public $rate                 = '';
 
 	function __construct( $purchase_id = null, $is_receiving = false ) {
-		$this->name = __( 'PayPal Pro 2.0', 'wpsc' );
+		$this->name = __( 'PayPal Pro 2.0', 'wp-e-commerce' );
 		parent::__construct( $purchase_id, $is_receiving );
 	}
 
 	function get_local_currency_code() {
 		if ( empty( $this->local_currency_code ) ) {
 			global $wpdb;
-			$this->local_currency_code = $wpdb->get_var( $wpdb->prepare( "SELECT `code` FROM `" . WPSC_TABLE_CURRENCY_LIST . "` WHERE `id`= %d LIMIT 1", get_option( 'currency_type' ) ) );
+			$this->local_currency_code = WPSC_Countries::get_currency_code( get_option( 'currency_type' ) );
 		}
 
 		return $this->local_currency_code;
@@ -74,7 +77,7 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 		$paypal_vars = array( );
 		// Store settings to be sent to paypal
 
-		$data = array( );
+		$data = array();
 		$data['USER']      = get_option( 'paypal_pro_username' );
 		$data['PWD']       = get_option( 'paypal_pro_password' );
 		$data['SIGNATURE'] = get_option( 'paypal_pro_signature' );
@@ -112,8 +115,9 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 		if ( is_numeric( $this->cart_data['shipping_address']['state'] ) )
 			$this->cart_data['shipping_address']['state'] = wpsc_get_state_by_id( $this->cart_data['shipping_address']['state'], 'code' );
 
-		if ( $this->cart_data['shipping_address']['country'] == 'UK' )
+		if ( $this->cart_data['shipping_address']['country'] == 'UK' ) {
 			$this->cart_data['shipping_address']['country'] = 'GB';
+		}
 
 		$data['SHIPTOSTATE']   = $this->cart_data['shipping_address']['state'];
 		$data['SHIPTOCOUNTRY'] = $this->cart_data['shipping_address']['country'];
@@ -151,7 +155,7 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 			$coupon = new wpsc_coupons( $this->cart_data['cart_discount_data'] );
 
 			// free shipping
-			if ( $coupon->is_percentage == 2 ) {
+			if ( $coupon->is_percentage() ) {
 				$shipping_total = 0;
 				$discount_value = 0;
 			} elseif ( $discount_value >= $item_total ) {
@@ -159,7 +163,7 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 				$shipping_total -= 0.01;
 			}
 
-			$data["L_NAME{$i}"] = _x( 'Coupon / Discount', 'PayPal Pro Item Name for Discounts', 'wpsc' );
+			$data["L_NAME{$i}"] = _x( 'Coupon / Discount', 'PayPal Pro Item Name for Discounts', 'wp-e-commerce' );
 			$data["L_AMT{$i}"] = - $discount_value;
 			$data["L_NUMBER{$i}"] = $i;
 			$data["L_QTY{$i}"] = 1;
@@ -171,7 +175,10 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 		$data['SHIPPINGAMT'] = $this->format_price( $shipping_total );
 		$data['TAXAMT'] = $this->convert( $tax_total );
 		$data['AMT'] = $data['ITEMAMT'] + $data['SHIPPINGAMT'] + $data['TAXAMT'];
-		$this->collected_gateway_data = apply_filters( 'wpsc_paypal_pro_gateway_data_array', $data, $this->cart_items );
+		$data = apply_filters( 'wpsc_paypal_pro_gateway_data_array', $data, $this->cart_items );
+		$data['BUTTONSOURCE'] = 'WPeC_Cart_WPP';
+
+		$this->collected_gateway_data = $data;
 	}
 
 	/**
@@ -187,17 +194,20 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 		$options = array(
 			'timeout' => 20,
 			'body' => $this->collected_gateway_data,
+			'httpversion' => '1.1',
 			'user-agent' => $this->cart_data['software_name'] . " " . get_bloginfo( 'url' ),
 			'sslverify' => false,
 		);
-		$response = wp_remote_post( $paypal_url, $options );
+		$response = wp_safe_remote_post( $paypal_url, $options );
 
 		// parse the response body
 
-		$error_data = array( );
+		$error_data      = array();
+		$parsed_response = array();
+
 		if ( is_wp_error( $response ) ) {
 			$error_data[0]['error_code'] = null;
-			$error_data[0]['error_message'] = __( 'There was a problem connecting to the payment gateway.', 'wpsc' );
+			$error_data[0]['error_message'] = __( 'There was a problem connecting to the payment gateway.', 'wp-e-commerce' );
 		} else {
 			parse_str( $response['body'], $parsed_response );
 		}
@@ -213,7 +223,7 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 					case 'ERRORCODE':
 						$error_data[$error_number]['error_code'] = $response_value;
 						if ( in_array( $response_value, $paypal_error_codes ) ) {
-							$error_data[$error_number]['error_message'] = __( 'There is a problem with your PayPal account configuration, please contact PayPal for further information.', 'wpsc' ) . $response_value;
+							$error_data[$error_number]['error_message'] = __( 'There is a problem with your PayPal account configuration, please contact PayPal for further information.', 'wp-e-commerce' ) . $response_value;
 
 							break 2;
 						}
@@ -236,7 +246,7 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 
 			case 'Failure': /// case 2 is order denied
 			default: /// default is http or unknown error state
-				foreach ( (array)$error_data as $error_row ) {
+				foreach ( (array) $error_data as $error_row ) {
 					$this->set_error_message( $error_row['error_message'] );
 				}
 				$this->return_to_checkout();
@@ -260,10 +270,11 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 		$options = array(
 			'timeout'    => 20,
 			'body'       => $received_values,
-			'user-agent' => ('WP e-Commerce/' . WPSC_PRESENTABLE_VERSION)
+			'httpversion' => '1.1',
+			'user-agent' => ('WP eCommerce/' . WPSC_PRESENTABLE_VERSION)
 		);
 
-		$response = wp_remote_post( $paypal_url, $options );
+		$response = wp_safe_remote_post( $paypal_url, $options );
 
 		if ( strpos( $response['body'], 'VERIFIED' ) !== false ) {
 			$this->paypal_ipn_values = $received_values;
@@ -324,7 +335,7 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 						$altered_count = 0;
 						if ( (bool)$cart_row['is_recurring'] == true ) {
 							$altered_count++;
-							wpsc_update_cartmeta( $cart_row['cart_item_id'], 'is_subscribed', 0 );
+							wpsc_update_cart_item_meta( $cart_row['cart_item_id'], 'is_subscribed', 0 );
 						}
 					}
 					break;
@@ -384,19 +395,19 @@ class wpsc_merchant_paypal_pro extends wpsc_merchant {
 
 function submit_paypal_pro() {
 	if ( isset( $_POST['PayPalPro']['username'] ) )
-		update_option( 'paypal_pro_username', $_POST['PayPalPro']['username'] );
+		update_option( 'paypal_pro_username', sanitize_text_field( $_POST['PayPalPro']['username'] ) );
 
 	if ( isset( $_POST['PayPalPro']['password'] ) )
-		update_option( 'paypal_pro_password', $_POST['PayPalPro']['password'] );
+		update_option( 'paypal_pro_password', sanitize_text_field( $_POST['PayPalPro']['password'] ) );
 
 	if(isset($_POST['paypal_curcode']))
-		update_option('paypal_curcode', $_POST['paypal_curcode']);
+		update_option('paypal_curcode', sanitize_text_field( $_POST['paypal_curcode'] ) );
 
 	if ( isset( $_POST['PayPalPro']['signature'] ) )
-		update_option( 'paypal_pro_signature', $_POST['PayPalPro']['signature'] );
+		update_option( 'paypal_pro_signature', sanitize_text_field( $_POST['PayPalPro']['signature'] ) );
 
 	if ( isset( $_POST['PayPalPro']['testmode'] ) )
-		update_option( 'paypal_pro_testmode', $_POST['PayPalPro']['testmode'] );
+		update_option( 'paypal_pro_testmode', sanitize_text_field( $_POST['PayPalPro']['testmode'] ) );
 
 	return true;
 }
@@ -411,7 +422,7 @@ function form_paypal_pro() {
 	$output = '
 	<tr>
 		<td>
-			<label for="paypal_pro_username">' . __( 'API Username:', 'wpsc' ) . '</label>
+			<label for="paypal_pro_username">' . __( 'API Username:', 'wp-e-commerce' ) . '</label>
 		</td>
 		<td>
 			<input type="text" name="PayPalPro[username]" id="paypal_pro_username" value="' . get_option( "paypal_pro_username" ) . '" size="30" />
@@ -419,7 +430,7 @@ function form_paypal_pro() {
 	</tr>
 	<tr>
 		<td>
-			<label for="paypal_pro_password">' . __( 'API Password:', 'wpsc' ) . '</label>
+			<label for="paypal_pro_password">' . __( 'API Password:', 'wp-e-commerce' ) . '</label>
 		</td>
 		<td>
 			<input type="password" name="PayPalPro[password]" id="paypal_pro_password" value="' . get_option( 'paypal_pro_password' ) . '" size="16" />
@@ -427,7 +438,7 @@ function form_paypal_pro() {
 	</tr>
 	<tr>
 		<td>
-			<label for="paypal_pro_signature">' . __( 'API Signature:', 'wpsc' ) . '</label>
+			<label for="paypal_pro_signature">' . __( 'API Signature:', 'wp-e-commerce' ) . '</label>
 		</td>
 		<td>
 			<input type="text" name="PayPalPro[signature]" id="paypal_pro_signature" value="' . get_option( 'paypal_pro_signature' ) . '" size="48" />
@@ -435,18 +446,18 @@ function form_paypal_pro() {
 	</tr>
 	<tr>
 		<td>
-			<label for="paypal_pro_testmode">' . __( 'Test Mode Enabled:', 'wpsc' ) . '</label>
+			<label for="paypal_pro_testmode">' . __( 'Test Mode Enabled:', 'wp-e-commerce' ) . '</label>
 		</td>
 		<td>
 			<input type="hidden" name="PayPalPro[testmode]" value="off" />
-			<label for="paypal_pro_testmode"><input type="checkbox" name="PayPalPro[testmode]" id="paypal_pro_testmode" value="on" ' . $selected . ' /> ' . __( 'Test Mode Enabled', 'wpsc') . '</label>
+			<label for="paypal_pro_testmode"><input type="checkbox" name="PayPalPro[testmode]" id="paypal_pro_testmode" value="on" ' . $selected . ' /> ' . __( 'Test Mode Enabled', 'wp-e-commerce') . '</label>
 			<p class=" description">
-  				' . sprintf( __( "Only enable test mode if you have a sandbox account with PayPal you can find out more about this <a href='%s'>here</a>", 'wpsc' ), esc_url( 'https://cms.paypal.com/us/cgi-bin/?cmd=_render-content&content_ID=developer/howto_testing_sandbox' ) ) . '
+  				' . sprintf( __( "Only enable test mode if you have a sandbox account with PayPal. You can find out more about this <a href='%s'>here</a>.", 'wp-e-commerce' ), esc_url( 'https://cms.paypal.com/us/cgi-bin/?cmd=_render-content&content_ID=developer/howto_testing_sandbox' ) ) . '
   			</p>
   		</td>
   	</tr>';
 
-	$store_currency_code = $wpdb->get_var( $wpdb->prepare( "SELECT `code` FROM `".WPSC_TABLE_CURRENCY_LIST."` WHERE `id` IN (%d)", get_option( 'currency_type' ) ) );
+	$store_currency_code = WPSC_Countries::get_currency_code( get_option( 'currency_type' ) );
 	$current_currency = get_option('paypal_curcode');
 
 	if(($current_currency == '') && in_array($store_currency_code, $wpsc_gateways['wpsc_merchant_paypal_pro']['supported_currencies']['currency_list'])) {
@@ -454,13 +465,13 @@ function form_paypal_pro() {
 		$current_currency = $store_currency_code;
 	}
 	if($current_currency != $store_currency_code) {
-		$output .= "<tr> <td colspan='2'><strong class='form_group'>" . __( 'Currency Converter', 'wpsc' ) . "</td> </tr>
+		$output .= "<tr> <td colspan='2'><strong class='form_group'>" . __( 'Currency Converter', 'wp-e-commerce' ) . "</td> </tr>
 		<tr>
-			<td colspan='2'>".__('Your website is using a currency not accepted by PayPal, select an accepted currency using the drop down menu below. Buyers on your site will still pay in your local currency however we will convert the currency and send the order through to PayPal using the currency you choose below.', 'wpsc')."</td>
+			<td colspan='2'>".__('Your website is using a currency not accepted by PayPal. Please select an accepted currency using the drop down menu below. Buyers on your site will still pay in your local currency. However, we will convert the currency and send the order through to PayPal using the currency you choose below.', 'wp-e-commerce')."</td>
 		</tr>
 
 		<tr>
-			<td>" . __('Convert to', 'wpsc' ) . " </td>
+			<td>" . __('Convert to', 'wp-e-commerce' ) . " </td>
 			<td>
 				<select name='paypal_curcode'>\n";
 
@@ -469,10 +480,15 @@ function form_paypal_pro() {
 
 		$paypal_currency_list = array_map( 'esc_sql', $wpsc_gateways['wpsc_merchant_paypal_pro']['supported_currencies']['currency_list'] );
 
-		$currency_list = $wpdb->get_results("SELECT DISTINCT `code`, `currency` FROM `".WPSC_TABLE_CURRENCY_LIST."` WHERE `code` IN ('".implode("','",$paypal_currency_list)."')", ARRAY_A);
-		foreach($currency_list as $currency_item) {
+		$currency_list = WPSC_Countries::get_currencies( true );
+		$currency_codes_in_commmon = array_intersect( array_keys( $currency_list ), $paypal_currency_list );
+
+		foreach ( $currency_codes_in_commmon as $currency_code ) {
 			$selected_currency = '';
-			if($current_currency == $currency_item['code']) {
+
+			$currency_item = $currency_list[$currency_code];
+
+			if ( $current_currency == $currency_item['code'] ) {
 				$selected_currency = "selected='selected'";
 			}
 			$output .= "<option ".$selected_currency." value='{$currency_item['code']}'>{$currency_item['currency']}</option>";
@@ -487,7 +503,7 @@ function form_paypal_pro() {
 	<tr>
 		<td colspan='2'>
 			<p class='description'>
-				" . sprintf( __( "For more help configuring Paypal Pro, please read our documentation <a href='%s'>here</a>", 'wpsc' ), esc_url( 'http://docs.getshopped.org/wiki/documentation/payments/paypal-payments-pro' ) ) . "
+				" . sprintf( __( "For more help configuring PayPal Pro, please read our documentation <a href='%s'>here</a>.", 'wp-e-commerce' ), esc_url( 'http://docs.wpecommerce.org/documentation/paypal-payments-pro/' ) ) . "
 				</p>
 		</td>
 	</tr>";
@@ -508,13 +524,13 @@ if ( in_array( 'wpsc_merchant_paypal_pro', (array)get_option( 'custom_gateway_op
 
 	$output = "
 	<tr>
-		<td class='wpsc_CC_details'>" . __( 'Credit Card Number *', 'wpsc' ) . "</td>
+		<td class='wpsc_CC_details'>" . __( 'Credit Card Number <span class="asterix">*</span>', 'wp-e-commerce' ) . "</td>
 		<td>
 			<input type='text' value='' name='card_number' />
 		</td>
 	</tr>
 	<tr>
-		<td class='wpsc_CC_details'>" . __( 'Credit Card Expiry *', 'wpsc' ) . "</td>
+		<td class='wpsc_CC_details'>" . __( 'Credit Card Expiry <span class="asterix">*</span>', 'wp-e-commerce' ) . "</td>
 		<td>
 			<select class='wpsc_ccBox' name='expiry[month]'>
 			" . $months . "
@@ -537,20 +553,20 @@ if ( in_array( 'wpsc_merchant_paypal_pro', (array)get_option( 'custom_gateway_op
 		</td>
 	</tr>
 	<tr>
-		<td class='wpsc_CC_details'>" . __( 'CVV *', 'wpsc' ) . "</td>
+		<td class='wpsc_CC_details'>" . __( 'CVV <span class="asterix">*</span>', 'wp-e-commerce' ) . "</td>
 		<td><input type='text' size='4' value='' maxlength='4' name='card_code' />
 		</td>
 	</tr>
 	<tr>
-		<td class='wpsc_CC_details'>" . __( 'Card Type *', 'wpsc' ) . "</td>
+		<td class='wpsc_CC_details'>" . __( 'Card Type <span class="asterix">*</span>', 'wp-e-commerce' ) . "</td>
 		<td>
 		<select class='wpsc_ccBox' name='cctype'>";
 
 	$card_types = array(
-		'Visa' => __( 'Visa', 'wpsc' ),
-		'Mastercard' => __( 'MasterCard', 'wpsc' ),
-		'Discover' => __( 'Discover', 'wpsc' ),
-		'Amex' => __( 'Amex', 'wpsc' ),
+		'Visa' => __( 'Visa', 'wp-e-commerce' ),
+		'Mastercard' => __( 'MasterCard', 'wp-e-commerce' ),
+		'Discover' => __( 'Discover', 'wp-e-commerce' ),
+		'Amex' => __( 'Amex', 'wp-e-commerce' ),
 	);
 	$card_types = apply_filters( 'wpsc_paypal_pro_accepted_card_types', $card_types );
 	foreach ( $card_types as $type => $title ) {

@@ -18,9 +18,14 @@
  */
 function wpsc_find_purchlog_status_name( $purchlog_status ) {
 	global $wpsc_purchlog_statuses;
+
+	$status_name = '';
+
 	foreach ( $wpsc_purchlog_statuses as $status ) {
 		if ( $status['order'] == $purchlog_status ) {
 			$status_name = $status['label'];
+		} else {
+			continue;
 		}
 	}
 	return $status_name;
@@ -34,16 +39,50 @@ function wpsc_find_purchlog_status_name( $purchlog_status ) {
  * @param string $return_value either 'name' or 'code' depending on what you want returned
  */
 function wpsc_get_state_by_id( $id, $return_value ) {
-	global $wpdb;
-	$sql = $wpdb->prepare( "SELECT " . esc_sql( $return_value ) . " FROM `" . WPSC_TABLE_REGION_TAX . "` WHERE `id`= %d", $id );
-	$value = $wpdb->get_var( $sql );
+
+	$region = new WPSC_Region( WPSC_Countries::get_country_id_by_region_id( $id ), $id );
+
+	$value = '';
+
+	if ( $return_value == 'name' ) {
+		$value = $region->get_name();
+	} elseif ( $return_value == 'code' ) {
+		$value = $region->get_code();
+	}
+
 	return $value;
 }
 
-function wpsc_country_has_state($country_code){
-	global $wpdb;
-	$country_data = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `".WPSC_TABLE_CURRENCY_LIST."` WHERE `isocode`= %s LIMIT 1", $country_code ), ARRAY_A );
+function wpsc_country_has_state( $country_code ){
+
+	$country_data = WPSC_Countries::get_country( $country_code, true ); // TODO this function does not seem to do what it's name indicates? What's up with that.
 	return $country_data;
+}
+
+/**
+ * Convert time interval to seconds.
+ *
+ * Takes a number an unit of time (hour/day/week) and converts it to seconds.
+ * It allows decimal intervals like 1.5 days.
+ *
+ * @since   3.8.14
+ * @access  public
+ *
+ * @param   int  $time      Stock keeping time.
+ * @param   int  $interval  Stock keeping interval unit (hour/day/week).
+ * @return  int             Seconds.
+ *
+ * @uses  MINUTE_IN_SECONDS, HOUR_IN_SECONDS, DAY_IN_SECONDS, WEEK_IN_SECONDS, YEAR_IN_SECONDS
+ */
+function wpsc_convert_time_interval_to_seconds( $time, $interval ) {
+	$convert = array(
+		'minute' => MINUTE_IN_SECONDS,
+		'hour'   => HOUR_IN_SECONDS,
+		'day'    => DAY_IN_SECONDS,
+		'week'   => WEEK_IN_SECONDS,
+		'year'   => YEAR_IN_SECONDS,
+	);
+	return floor( $time * $convert[ $interval ] );
 }
 
 /**
@@ -63,22 +102,22 @@ function wpsc_add_new_user( $user_login, $user_pass, $user_email ) {
 
 	// Check the username
 	if ( $user_login == '' ) {
-		$errors->add( 'empty_username', __( '<strong>ERROR</strong>: Please enter a username.', 'wpsc' ) );
+		$errors->add( 'empty_username', __( '<strong>ERROR</strong>: Please enter a username.', 'wp-e-commerce' ) );
 	} elseif ( !validate_username( $user_login ) ) {
-		$errors->add( 'invalid_username', __( '<strong>ERROR</strong>: This username is invalid.  Please enter a valid username.', 'wpsc' ) );
+		$errors->add( 'invalid_username', __( '<strong>ERROR</strong>: This username is invalid.  Please enter a valid username.', 'wp-e-commerce' ) );
 		$user_login = '';
 	} elseif ( username_exists( $user_login ) ) {
-		$errors->add( 'username_exists', __( '<strong>ERROR</strong>: This username is already registered, please choose another one.', 'wpsc' ) );
+		$errors->add( 'username_exists', __( '<strong>ERROR</strong>: This username is already registered, please choose another one.', 'wp-e-commerce' ) );
 	}
 
 	// Check the e-mail address
 	if ( $user_email == '' ) {
-		$errors->add( 'empty_email', __( '<strong>ERROR</strong>: Please type your e-mail address.', 'wpsc' ) );
+		$errors->add( 'empty_email', __( '<strong>ERROR</strong>: Please type your e-mail address.', 'wp-e-commerce' ) );
 	} elseif ( !is_email( $user_email ) ) {
-		$errors->add( 'invalid_email', __( '<strong>ERROR</strong>: The email address isn&#8217;t correct.', 'wpsc' ) );
+		$errors->add( 'invalid_email', __( '<strong>ERROR</strong>: The email address isn&#8217;t correct.', 'wp-e-commerce' ) );
 		$user_email = '';
 	} elseif ( email_exists( $user_email ) ) {
-		$errors->add( 'email_exists', __( '<strong>ERROR</strong>: This email is already registered, please choose another one.', 'wpsc' ) );
+		$errors->add( 'email_exists', __( '<strong>ERROR</strong>: This email is already registered, please choose another one.', 'wp-e-commerce' ) );
 	}
 
 	if ( $errors->get_error_code() ) {
@@ -86,7 +125,7 @@ function wpsc_add_new_user( $user_login, $user_pass, $user_email ) {
 	}
 	$user_id = wp_create_user( $user_login, $user_pass, $user_email );
 	if ( !$user_id ) {
-		$errors->add( 'registerfail', sprintf( __( '<strong>ERROR</strong>: Couldn&#8217;t register you... please contact the <a href="mailto:%s">webmaster</a> !', 'wpsc' ), get_option( 'admin_email' ) ) );
+		$errors->add( 'registerfail', sprintf( __( '<strong>ERROR</strong>: Couldn&#8217;t register you... please contact the <a href="mailto:%s">webmaster</a> !', 'wp-e-commerce' ), get_option( 'admin_email' ) ) );
 		return $errors;
 	}
 
@@ -96,81 +135,6 @@ function wpsc_add_new_user( $user_login, $user_pass, $user_email ) {
 	return $user;
 }
 
-/**
- * Deprecated function
- *
- * @deprecated 3.8.9
- */
-function wpsc_post_title_seo( $title ) {
-	global $wpdb, $page_id, $wp_query;
-	$new_title = wpsc_obtain_the_title();
-	if ( $new_title != '' ) {
-		$title = $new_title;
-	}
-	return esc_html( $title );
-}
-
-//add_filter( 'single_post_title', 'wpsc_post_title_seo' );
-
-/**
- * WPSC canonical URL function
- * Needs a recent version
- * @since 3.7
- * @param int product id
- * @return bool true or false
- */
-function wpsc_change_canonical_url( $url = '' ) {
-	global $wpdb, $wp_query, $wpsc_page_titles;
-
-	if ( $wp_query->is_single == true && 'wpsc-product' == $wp_query->query_vars['post_type']) {
-		$url = get_permalink( $wp_query->get_queried_object()->ID );
-	}
-	return apply_filters( 'wpsc_change_canonical_url', $url );
-}
-
-add_filter( 'aioseop_canonical_url', 'wpsc_change_canonical_url' );
-
-function wpsc_insert_canonical_url() {
-	$wpsc_url = wpsc_change_canonical_url( null );
-	echo "<link rel='canonical' href='$wpsc_url' />\n";
-}
-
-function wpsc_canonical_url() {
-	$wpsc_url = wpsc_change_canonical_url( null );
-	if ( $wpsc_url != null ) {
-		remove_action( 'wp_head', 'rel_canonical' );
-		add_action( 'wp_head', 'wpsc_insert_canonical_url' );
-	}
-}
-add_action( 'template_redirect', 'wpsc_canonical_url' );
-// check for all in one SEO pack and the is_static_front_page function
-if ( is_callable( array( "All_in_One_SEO_Pack", 'is_static_front_page' ) ) ) {
-
-	function wpsc_change_aioseop_home_title( $title ) {
-		global $aiosp, $aioseop_options;
-
-		if ( (get_class( $aiosp ) == 'All_in_One_SEO_Pack') && $aiosp->is_static_front_page() ) {
-			$aiosp_home_title = $aiosp->internationalize( $aioseop_options['aiosp_home_title'] );
-			$new_title = wpsc_obtain_the_title();
-			if ( $new_title != '' ) {
-				$title = str_replace( $aiosp_home_title, $new_title, $title );
-			}
-		}
-		return $title;
-	}
-
-	add_filter( 'aioseop_home_page_title', 'wpsc_change_aioseop_home_title' );
-}
-
-function wpsc_set_aioseop_description( $data ) {
-	$replacement_data = wpsc_obtain_the_description();
-	if ( $replacement_data != '' ) {
-		$data = $replacement_data;
-	}
-	return $data;
-}
-
-add_filter( 'aioseop_description', 'wpsc_set_aioseop_description' );
 
 function wpsc_set_aioseop_keywords( $data ) {
 	global $wpdb, $wp_query, $wpsc_title_data, $aioseop_options;
@@ -180,7 +144,7 @@ function wpsc_set_aioseop_keywords( $data ) {
 		$product_id = $wpdb->get_var( "SELECT `product_id` FROM `" . WPSC_TABLE_PRODUCTMETA . "` WHERE `meta_key` IN ( 'url_name' ) AND `meta_value` IN ( '{$wp_query->query_vars['product_url_name']}' ) ORDER BY `id` DESC LIMIT 1" );
 
 		$replacement_data = '';
-		$replacement_data_array = array( );
+		$replacement_data_array = array();
 		if ( $aioseop_options['aiosp_use_categories'] ) {
 			$category_list = $wpdb->get_col( "SELECT `categories`.`name` FROM `" . WPSC_TABLE_ITEM_CATEGORY_ASSOC . "` AS `assoc` , `" . WPSC_TABLE_PRODUCT_CATEGORIES . "` AS `categories` WHERE `assoc`.`product_id` IN ('{$product_id}') AND `assoc`.`category_id` = `categories`.`id` AND `categories`.`active` IN('1')" );
 			$replacement_data_array += $category_list;
@@ -197,61 +161,6 @@ function wpsc_set_aioseop_keywords( $data ) {
 
 add_filter( 'aioseop_keywords', 'wpsc_set_aioseop_keywords' );
 
-/**
- * Populate Also Bought List
- * Runs on checking out and populates the also bought list.
- */
-function wpsc_populate_also_bought_list() {
-	global $wpdb, $wpsc_cart, $wpsc_coupons;
-
-	$new_also_bought_data = array();
-	foreach ( $wpsc_cart->cart_items as $outer_cart_item ) {
-		$new_also_bought_data[$outer_cart_item->product_id] = array();
-		foreach ( $wpsc_cart->cart_items as $inner_cart_item ) {
-			if ( $outer_cart_item->product_id != $inner_cart_item->product_id ) {
-				$new_also_bought_data[$outer_cart_item->product_id][$inner_cart_item->product_id] = $inner_cart_item->quantity;
-			} else {
-				continue;
-			}
-		}
-	}
-
-	$insert_statement_parts = array();
-	foreach ( $new_also_bought_data as $new_also_bought_id => $new_also_bought_row ) {
-		$new_other_ids = array_keys( $new_also_bought_row );
-		$also_bought_data = $wpdb->get_results( $wpdb->prepare( "SELECT `id`, `associated_product`, `quantity` FROM `" . WPSC_TABLE_ALSO_BOUGHT . "` WHERE `selected_product` IN(%d) AND `associated_product` IN('" . implode( "','", $new_other_ids ) . "')", $new_also_bought_id ), ARRAY_A );
-		$altered_new_also_bought_row = $new_also_bought_row;
-
-		foreach ( (array)$also_bought_data as $also_bought_row ) {
-			$quantity = $new_also_bought_row[$also_bought_row['associated_product']] + $also_bought_row['quantity'];
-
-			unset( $altered_new_also_bought_row[$also_bought_row['associated_product']] );
-			$wpdb->update(
-				WPSC_TABLE_ALSO_BOUGHT,
-				array(
-				    'quantity' => $quantity
-				),
-				array(
-				    'id' => $also_bought_row['id']
-				),
-				'%d',
-				'%d'
-			);
-	    }
-
-		if ( count( $altered_new_also_bought_row ) > 0 ) {
-			foreach ( $altered_new_also_bought_row as $associated_product => $quantity ) {
-				$insert_statement_parts[] = "(" . absint( esc_sql( $new_also_bought_id ) ) . "," . absint( esc_sql( $associated_product ) ) . "," . absint( esc_sql( $quantity ) ) . ")";
-			}
-		}
-	}
-
-	if ( count( $insert_statement_parts ) > 0 ) {
-		$insert_statement = "INSERT INTO `" . WPSC_TABLE_ALSO_BOUGHT . "` (`selected_product`, `associated_product`, `quantity`) VALUES " . implode( ",\n ", $insert_statement_parts );
-		$wpdb->query( $insert_statement );
-	}
-}
-
 function wpsc_get_country_form_id_by_type($type){
 	global $wpdb;
 	$sql = $wpdb->prepare( 'SELECT `id` FROM `'.WPSC_TABLE_CHECKOUT_FORMS.'` WHERE `type`= %s LIMIT 1', $type );
@@ -260,14 +169,14 @@ function wpsc_get_country_form_id_by_type($type){
 }
 
 function wpsc_get_country( $country_code ) {
-	$country = new WPSC_Country( $country_code, 'isocode' );
-	return $country->get( 'country' );
+	$wpsc_country = new WPSC_Country( $country_code );
+	return $wpsc_country->get_name();
 }
 
 function wpsc_get_region( $region_id ) {
-	global $wpdb;
-	$region = $wpdb->get_var( $wpdb->prepare( "SELECT `name` FROM `" . WPSC_TABLE_REGION_TAX . "` WHERE `id` IN(%d)", $region_id ) );
-	return $region;
+	$country_id = WPSC_Countries::get_country_id_by_region_id( $region_id );
+	$wpsc_region = new WPSC_Region( $country_id, $region_id );
+	return $wpsc_region->get_name();
 }
 
 function nzshpcrt_display_preview_image() {
@@ -279,6 +188,10 @@ function nzshpcrt_display_preview_image() {
 	) {
 
 		if ( function_exists( "getimagesize" ) ) {
+
+			$imagepath   = '';
+			$category_id = 0;
+
 			if ( $_GET['image_name'] ) {
 				$image = basename( $_GET['image_name'] );
 				$imagepath = WPSC_USER_UPLOADS_DIR . $image;
@@ -290,9 +203,10 @@ function nzshpcrt_display_preview_image() {
 				}
 			}
 
-			if ( !is_file( $imagepath ) ) {
+			if ( ! is_file( $imagepath ) ) {
 				$imagepath = WPSC_FILE_PATH . "/images/no-image-uploaded.gif";
 			}
+
 			$image_size = @getimagesize( $imagepath );
 			if ( is_numeric( $_GET['height'] ) && is_numeric( $_GET['width'] ) ) {
 				$height = (int)$_GET['height'];
@@ -305,6 +219,10 @@ function nzshpcrt_display_preview_image() {
 				$width = $image_size[0];
 				$height = $image_size[1];
 			}
+
+			$product_id = (int) $_GET['productid'];
+			$image_id   = (int) $_GET['image_id'];
+
 			if ( $product_id > 0 ) {
 				$cache_filename = basename( "product_{$product_id}_{$height}x{$width}" );
 			} else if ( $category_id > 0 ) {
@@ -312,13 +230,10 @@ function nzshpcrt_display_preview_image() {
 			} else {
 				$cache_filename = basename( "product_img_{$image_id}_{$height}x{$width}" );
 			}
+
 			$imagetype = @getimagesize( $imagepath );
 			$use_cache = false;
 			switch ( $imagetype[2] ) {
-				case IMAGETYPE_JPEG:
-					$extension = ".jpg";
-					break;
-
 				case IMAGETYPE_GIF:
 					$extension = ".gif";
 					break;
@@ -326,6 +241,12 @@ function nzshpcrt_display_preview_image() {
 				case IMAGETYPE_PNG:
 					$extension = ".png";
 					break;
+
+				case IMAGETYPE_JPEG:
+				default:
+					$extension = ".jpg";
+					break;
+
 			}
 			if ( file_exists( WPSC_CACHE_DIR . $cache_filename . $extension ) ) {
 				$original_modification_time = filemtime( $imagepath );
@@ -336,10 +257,7 @@ function nzshpcrt_display_preview_image() {
 			}
 
 			if ( $use_cache === true ) {
-				$cache_url = WPSC_CACHE_URL;
-				if ( is_ssl ( ) ) {
-					$cache_url = str_replace( "http://", "https://", $cache_url );
-				}
+				$cache_url = set_url_scheme( WPSC_CACHE_URL );
 				header( "Location: " . $cache_url . $cache_filename . $extension );
 				exit( '' );
 			} else {
@@ -360,11 +278,12 @@ function nzshpcrt_display_preview_image() {
 						break;
 
 					default:
+						$src_img      = false;
 						$pass_imgtype = false;
 						break;
 				}
 
-				if ( $pass_imgtype === true ) {
+				if ( $pass_imgtype === true && $src_img ) {
 					$source_w = imagesx( $src_img );
 					$source_h = imagesy( $src_img );
 
@@ -406,15 +325,15 @@ function nzshpcrt_display_preview_image() {
 					// Create temp resized image
 					$bgcolor_default = apply_filters( 'wpsc_preview_image_bgcolor', array( 255, 255, 255 ) );
 					$temp_img = ImageCreateTrueColor( $temp_w, $temp_h );
-					$bgcolor = ImageColorAllocate( $temp_img, $bgcolor_default[0], $bgcolor_default[1], $bgcolor_default[2] ) ;
+					$bgcolor = ImageColorAllocate( $temp_img, $bgcolor_default[0], $bgcolor_default[1], $bgcolor_default[2] );
 					ImageFilledRectangle( $temp_img, 0, 0, $temp_w, $temp_h, $bgcolor );
-					ImageAlphaBlending( $temp_img, TRUE );
+					ImageAlphaBlending( $temp_img, true );
 					ImageCopyResampled( $temp_img, $src_img, 0, 0, 0, 0, $temp_w, $temp_h, $source_w, $source_h );
 
 					$dst_img = ImageCreateTrueColor( $width, $height );
 					$bgcolor = ImageColorAllocate( $dst_img, $bgcolor_default[0], $bgcolor_default[1], $bgcolor_default[2] );
 					ImageFilledRectangle( $dst_img, 0, 0, $width, $height, $bgcolor );
-					ImageAlphaBlending( $dst_img, TRUE );
+					ImageAlphaBlending( $dst_img, true );
 
 					// X & Y Offset to crop image properly
 					if ( $temp_w < $width ) {
@@ -488,6 +407,8 @@ function wpsc_list_dir( $dirname ) {
 	 */
 	$dir = @opendir( $dirname );
 	$num = 0;
+	$dirlist = array();
+
 	while ( ($file = @readdir( $dir )) !== false ) {
 		//filter out the dots and any backup files, dont be tempted to correct the "spelling mistake", its to filter out a previous spelling mistake.
 		if ( ($file != "..") && ($file != ".") && !stristr( $file, "~" ) && !stristr( $file, "Chekcout" ) && !stristr( $file, "error_log" ) && !( strpos( $file, "." ) === 0 ) ) {
@@ -583,7 +504,7 @@ function wpsc_readfile_chunked( $filename, $retbytes = true ) {
  * Retrieve the list of tags for a product.
  *
  * Compatibility layer for themes and plugins. Also an easy layer of abstraction
- * away from the complexity of the taxonomy layer. Copied from the Wordpress posts code
+ * away from the complexity of the taxonomy layer. Copied from the WordPress posts code
  *
  * @since 3.8.0
  *
@@ -593,7 +514,7 @@ function wpsc_readfile_chunked( $filename, $retbytes = true ) {
  * @param array $args Optional. Overwrite the defaults.
  * @return array
  */
-function wp_get_product_tags( $product_id = 0, $args = array( ) ) {
+function wp_get_product_tags( $product_id = 0, $args = array() ) {
 	$product_id = (int)$product_id;
 
 	$defaults = array( 'fields' => 'ids' );
@@ -617,7 +538,7 @@ function wp_get_product_tags( $product_id = 0, $args = array( ) ) {
  * @param array $args Optional. Overwrite the defaults.
  * @return array
  */
-function wp_get_product_categories( $product_id = 0, $args = array( ) ) {
+function wp_get_product_categories( $product_id = 0, $args = array() ) {
 	$product_id = (int)$product_id;
 
 	$defaults = array( 'fields' => 'ids' );
@@ -639,7 +560,7 @@ function wp_get_product_categories( $product_id = 0, $args = array( ) ) {
  * @param array $post_categories Optional. List of categories.
  * @return bool|mixed
  */
-function wp_set_product_categories( $product_id, $post_categories = array( ) ) {
+function wp_set_product_categories( $product_id, $post_categories = array() ) {
 	$product_id = (int)$product_id;
 	// If $post_categories isn't already an array, make it one:
 	if ( !is_array( $post_categories ) || 0 == count( $post_categories ) || empty( $post_categories ) ) {
@@ -673,7 +594,7 @@ function get_the_product_category( $id ) {
 	if ( !empty( $categories ) )
 		usort( $categories, '_usort_terms_by_name' );
 	else
-		$categories = array( );
+		$categories = array();
 
 	foreach ( (array)array_keys( $categories ) as $key ) {
 		_make_cat_compat( $categories[$key] );
@@ -701,7 +622,7 @@ function wpsc_check_memory_limit() {
 		$freeMemory = $memory_limit - memory_get_usage();
 
 		// build the test sizes
-		$sizes = array( );
+		$sizes = array();
 		$sizes[] = array( 'width' => 800, 'height' => 600 );
 		$sizes[] = array( 'width' => 1024, 'height' => 768 );
 		$sizes[] = array( 'width' => 1280, 'height' => 960 );  // 1MP
@@ -713,7 +634,7 @@ function wpsc_check_memory_limit() {
 		foreach ( $sizes as $size ) {
 			// very, very rough estimation
 			if ( $freeMemory < round( $size['width'] * $size['height'] * 5.09 ) ) {
-				$result = sprintf( __( 'Please refrain from uploading images larger than <strong>%d x %d</strong> pixels', 'wpsc' ), $size['width'], $size['height'] );
+				$result = sprintf( __( 'Please refrain from uploading images larger than <strong>%d x %d</strong> pixels', 'wp-e-commerce' ), $size['width'], $size['height'] );
 				return $result;
 			}
 		}
@@ -790,7 +711,7 @@ function wpsc_get_extension( $str ) {
  *   trigger or false to not trigger error.
  *
  * @param string $function The function that was called
- * @param string $version The version of WP e-Commerce that deprecated the function
+ * @param string $version The version of WP eCommerce that deprecated the function
  * @param string $replacement Optional. The function that should have been called
  */
 function _wpsc_deprecated_function( $function, $version, $replacement = null ) {
@@ -798,9 +719,9 @@ function _wpsc_deprecated_function( $function, $version, $replacement = null ) {
 
 	// Allow plugin to filter the output error trigger
 	if ( WP_DEBUG && apply_filters( 'wpsc_deprecated_function_trigger_error', true ) ) {
-		if ( ! is_null($replacement) )
+		if ( ! is_null( $replacement ) )
 			trigger_error(
-				sprintf( __( '%1$s is <strong>deprecated</strong> since WP e-Commerce version %2$s! Use %3$s instead.', 'wpsc' ),
+				sprintf( __( '%1$s is <strong>deprecated</strong> since WP eCommerce version %2$s! Use %3$s instead.', 'wp-e-commerce' ),
 					$function,
 					$version,
 					$replacement
@@ -808,7 +729,7 @@ function _wpsc_deprecated_function( $function, $version, $replacement = null ) {
 			);
 		else
 			trigger_error(
-				sprintf( __( '%1$s is <strong>deprecated</strong> since WP e-Commerce version %2$s with no alternative available.', 'wpsc' ),
+				sprintf( __( '%1$s is <strong>deprecated</strong> since WP eCommerce version %2$s with no alternative available.', 'wp-e-commerce' ),
 					$function,
 					$version
 				)
@@ -836,7 +757,7 @@ function _wpsc_deprecated_function( $function, $version, $replacement = null ) {
  *   trigger or false to not trigger error.
  *
  * @param string $file The file that was included
- * @param string $version The version of WP e-Commerce that deprecated the file
+ * @param string $version The version of WP eCommerce that deprecated the file
  * @param string $replacement Optional. The file that should have been included based on ABSPATH
  * @param string $message Optional. A message regarding the change
  */
@@ -849,7 +770,7 @@ function _wpsc_deprecated_file( $file, $version, $replacement = null, $message =
 		$message = empty( $message ) ? '' : ' ' . $message;
 		if ( ! is_null( $replacement ) )
 			trigger_error(
-				sprintf( __( '%1$s is <strong>deprecated</strong> since WP e-Commerce version %2$s! Use %3$s instead.', 'wpsc' ),
+				sprintf( __( '%1$s is <strong>deprecated</strong> since WP eCommerce version %2$s! Use %3$s instead.', 'wp-e-commerce' ),
 					$file,
 					$version,
 					$replacement
@@ -857,7 +778,7 @@ function _wpsc_deprecated_file( $file, $version, $replacement = null, $message =
 			);
 		else
 			trigger_error(
-				sprintf( __( '%1$s is <strong>deprecated</strong> since WP e-Commerce version %2$s with no alternative available.', 'wpsc' ),
+				sprintf( __( '%1$s is <strong>deprecated</strong> since WP eCommerce version %2$s with no alternative available.', 'wp-e-commerce' ),
 					$file,
 					$version
 				) . $message
@@ -893,7 +814,7 @@ function _wpsc_deprecated_file( $file, $version, $replacement = null, $message =
  *   trigger or false to not trigger error.
  *
  * @param string $function The function that was called
- * @param string $version The version of WP e-Commerce that deprecated the argument used
+ * @param string $version The version of WP eCommerce that deprecated the argument used
  * @param string $message Optional. A message regarding the change.
  */
 function _wpsc_deprecated_argument( $function, $version, $message = null ) {
@@ -905,7 +826,7 @@ function _wpsc_deprecated_argument( $function, $version, $message = null ) {
 		if ( ! is_null( $message ) )
 			trigger_error(
 				sprintf(
-					__( '%1$s was called with an argument that is <strong>deprecated</strong> since WP e-Commerce version %2$s! %3$s', 'wpsc' ),
+					__( '%1$s was called with an argument that is <strong>deprecated</strong> since WP eCommerce version %2$s! %3$s', 'wp-e-commerce' ),
 					$function,
 					$version,
 					$message
@@ -914,7 +835,7 @@ function _wpsc_deprecated_argument( $function, $version, $message = null ) {
 		else
 			trigger_error(
 				sprintf(
-					__( '%1$s was called with an argument that is <strong>deprecated</strong> since WP e-Commerce version %2$s with no alternative available.', 'wpsc' ),
+					__( '%1$s was called with an argument that is <strong>deprecated</strong> since WP eCommerce version %2$s with no alternative available.', 'wp-e-commerce' ),
 					$function,
 					$version
 				)
@@ -940,7 +861,7 @@ function _wpsc_deprecated_argument( $function, $version, $message = null ) {
  *
  * @param string $function The function that was called.
  * @param string $message A message explaining what has been done incorrectly.
- * @param string $version The version of WP e-Commerce where the message was added.
+ * @param string $version The version of WP eCommerce where the message was added.
  */
 function _wpsc_doing_it_wrong( $function, $message, $version ) {
 
@@ -948,13 +869,13 @@ function _wpsc_doing_it_wrong( $function, $message, $version ) {
 
 	// Allow plugin to filter the output error trigger
 	if ( WP_DEBUG && apply_filters( 'wpsc_doing_it_wrong_trigger_error', true ) ) {
-		$version =   is_null( $version )
+		$version = is_null( $version )
 		           ? ''
-		           : sprintf( __( '(This message was added in WP e-Commerce version %s.)', 'wpsc' ), $version );
-		$message .= ' ' . __( 'Please see <a href="http://codex.wordpress.org/Debugging_in_WordPress">Debugging in WordPress</a> for more information.', 'wpsc' );
+		           : sprintf( __( '(This message was added in WP eCommerce version %s.)', 'wp-e-commerce' ), $version );
+		$message .= ' ' . __( 'Please see <a href="http://codex.wordpress.org/Debugging_in_WordPress">Debugging in WordPress</a> for more information.', 'wp-e-commerce' );
 		trigger_error(
 			sprintf(
-				__( '%1$s was called <strong>incorrectly</strong>. %2$s %3$s', 'wpsc' ),
+				__( '%1$s was called <strong>incorrectly</strong>. %2$s %3$s', 'wp-e-commerce' ),
 				$function,
 				$message,
 				$version
@@ -978,7 +899,7 @@ function wpsc_max_purchase_id() {
 	global $wpdb;
 	if ( false === ( $max_purchase_id = get_transient( 'max_purchase_id' ) ) ) {
 		 $max_purchase_id = $wpdb->get_var( 'SELECT MAX( id ) FROM ' . WPSC_TABLE_PURCHASE_LOGS );
-		 set_transient( 'max_purchase_id', $max_purchase_id, 60 * 60 * 24 ); // day of seconds
+		set_transient( 'max_purchase_id', $max_purchase_id, 60 * 60 * 24 ); // day of seconds
 	}
 	return (int) $max_purchase_id;
 }
@@ -994,8 +915,149 @@ function wpsc_max_purchase_id() {
  */
 
 function wpsc_invalidate_max_purchase_id_transient () {
-	 delete_transient( 'max_purchase_id' );
+	delete_transient( 'max_purchase_id' );
 }
 
 add_action( 'wpsc_purchase_log_insert', 'wpsc_invalidate_max_purchase_id_transient' );
 add_action( 'wpsc_purchase_log_delete', 'wpsc_invalidate_max_purchase_id_transient' );
+
+/** Checks to see whether terms and conditions are empty
+ * @access public
+ *
+ * @since 3.8
+ * @return (boolean) true or false
+ */
+function wpsc_has_tnc(){
+	if('' == get_option('terms_and_conditions'))
+		return false;
+	else
+		return true;
+}
+
+if ( isset( $_GET['termsandconds'] ) && 'true' == $_GET['termsandconds'] )
+	add_action( 'init', 'wpsc_show_terms_and_conditions' );
+
+function wpsc_show_terms_and_conditions() {
+	echo wpautop( wp_kses_post( get_option( 'terms_and_conditions' ) ) );
+	die();
+}
+
+/**
+ * Helper function to display proper spinner icon, depending on WP version used.
+ * This way, WP 3.8+ users will not feel like they are in a time-warp.
+ *
+ * @since 3.8.13
+ *
+ * @return void
+ */
+function wpsc_get_ajax_spinner() {
+	global $wp_version;
+
+	if ( version_compare( $wp_version, '3.8', '<' ) ) {
+		$url = admin_url( 'images/wpspin_light.gif' );
+	} else {
+		$url = admin_url( 'images/spinner.gif' );
+	}
+
+	return apply_filters( 'wpsc_get_ajax_spinner', $url );
+}
+
+function _wpsc_remove_erroneous_files() {
+
+	if ( ! wpsc_is_store_admin() ) {
+		return;
+	}
+
+	$files = array(
+		 WPSC_FILE_PATH . '/wpsc-components/marketplace-core-v1/library/Sputnik/.htaccess',
+		 WPSC_FILE_PATH . '/wpsc-components/marketplace-core-v1/library/Sputnik/error_log',
+		 WPSC_FILE_PATH . '/wpsc-components/marketplace-core-v1/library/Sputnik/functions.php',
+		 WPSC_FILE_PATH . '/wpsc-components/marketplace-core-v1/library/Sputnik/admin-functions.php',
+		 WPSC_FILE_PATH . '/wpsc-components/marketplace-core-v1/library/Sputnik/advanced-cache.php'
+	);
+
+	foreach ( $files as $file ) {
+		if ( is_file( $file ) ) {
+			@unlink( $file );
+		}
+	}
+
+	update_option( 'wpsc_38131_file_check', false );
+}
+
+if ( get_option( 'wpsc_38131_file_check', true ) ) {
+	add_action( 'admin_init', '_wpsc_remove_erroneous_files' );
+}
+
+
+/**
+ * Store a WP eCommerce Transient
+ * Wrapper function to cover WordPress' set transient function.
+ * Note: Initial reason for implmenting this was unusual derserialization errors coming from the APC
+ * component when APC tries to deserialize a transient containing nested objects. This wrapper function
+ * encodes the transient contents so that APC will not try to deserialize it into component objects.
+ *
+ * @since 3.9.3
+ * @param string $transient  Transient name. Expected to not be SQL-escaped. Must be
+ *                           45 characters or fewer in length.
+ * @param mixed  $value      Transient value. Must be serializable if non-scalar.
+ *                           Expected to not be SQL-escaped.
+ * @param int    $expiration Optional. Time until expiration in seconds. Default 0.
+ * @return bool  false if value was not set and true if value was set.*
+ */
+function _wpsc_set_transient(  $transient, $value, $expiration = 0 )  {
+	$serialized_value = serialize( $value );
+	$encoded_value = base64_encode( $serialized_value );
+	return set_transient( $transient, $encoded_value, $expiration );
+}
+
+/**
+ * Retrieve a WP eCommerce Transient
+ * Wrapper function to cover WordPress' get transient function.
+ * Note: Initial reason for implmenting this was unusual derserialization errors coming from the APC
+ * component when APC tries to deserialize a transient containing nested objects. This wrapper function
+ * decodes the transient contents that were encoded so that APC will would try to deserialize it into
+ * component objects. If the transient contents can not be decoded, the transient is deleted and the
+ * function will return false as if the tranient never existed.
+ *
+ * @since 3.9.3
+ * @param string $transient Transient name. Expected to not be SQL-escaped.
+ * @return mixed value of transient, false if transient did not exist
+ */
+function _wpsc_get_transient( $transient )  {
+	$encoded_value = get_transient( $transient );
+	$value = false;
+
+	if ( false !== $encoded_value ) {
+		if ( ! empty( $encoded_value ) && is_string( $encoded_value ) ) {
+			$serialized_value = @base64_decode( $encoded_value );
+			if ( is_string( $serialized_value ) ) {
+				$value = unserialize( $serialized_value );
+			} else {
+				$value = false;
+			}
+
+			// if there was a transient, but it could not be decoded, we delete the transient to get back
+			// to a working state
+			if ( false === $value ) {
+				_wpsc_delete_transient( $transient );
+			}
+		}
+	}
+
+	return $value;
+}
+
+/**
+ * Delete a WP eCommerce Transient
+ * Wrapper function to cover WordPress' delete transient function.
+ * Note: Initial reason for implmenting this was unusual derserialization errors coming from the APC
+ * component when APC tries to deserialize a transient containing nested objects.
+ *
+ * @since 3.9.3
+ * @param string $transient Transient name. Expected to not be SQL-escaped.
+ * @return mixed value of transient, false if transient did not exist
+ */
+function _wpsc_delete_transient( $transient )  {
+	return delete_transient( $transient );
+}

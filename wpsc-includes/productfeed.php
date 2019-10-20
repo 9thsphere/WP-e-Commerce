@@ -1,42 +1,40 @@
 <?php
-
+/**
+ * Generates an RSS feed for WP eCommerce Products
+ *
+ * @package wp-e-commerce
+ */
 
 function wpsc_feed_publisher() {
 
 	// If the user wants a product feed, then hook-in the product feed function
-	if ( isset($_GET["rss"]) && ($_GET["rss"] == "true") &&
-	     ($_GET["action"] == "product_list") ) {
-
+	if ( isset( $_GET['rss']) && ( $_GET["rss"] == "true" ) &&
+	     ( $_GET["action"] == "product_list" ) ) {
     		add_action( 'wp', 'wpsc_generate_product_feed' );
-
   	}
-
 }
 
-add_action('init', 'wpsc_feed_publisher');
-
+add_action( 'init', 'wpsc_feed_publisher' );
 
 function wpsc_generate_product_feed() {
 
-	global $wpdb, $wp_query, $post;
+    global $wpdb, $wp_query, $post;
 
     set_time_limit(0);
-    
+
     $xmlformat = '';
+
     if ( isset( $_GET['xmlformat'] ) ) {
     	$xmlformat = $_GET['xmlformat'];
     }
-	
+
 	// Don't build up a huge posts cache for the whole store - http://code.google.com/p/wp-e-commerce/issues/detail?id=885
-	// WP 3.3+ only
-	if ( function_exists ( 'wp_suspend_cache_addition' ) ) {
-		wp_suspend_cache_addition(true);
-	}
-	
+	wp_suspend_cache_addition(true);
+
     $chunk_size = apply_filters ( 'wpsc_productfeed_chunk_size', 50 );
 
     // Don't cache feed under WP Super-Cache
-    define( 'DONOTCACHEPAGE',TRUE );
+    define( 'DONOTCACHEPAGE', true );
 
 	$selected_category = '';
 	$selected_product = '';
@@ -73,35 +71,48 @@ function wpsc_generate_product_feed() {
 
 	echo ">\n\r";
 	echo "  <channel>\n\r";
-	echo "    <title><![CDATA[" . sprintf( _x( '%s Products', 'XML Feed Title', 'wpsc' ), get_option( 'blogname' ) ) . "]]></title>\n\r";
+	echo "    <title><![CDATA[" . sprintf( _x( '%s Products', 'XML Feed Title', 'wp-e-commerce' ), get_option( 'blogname' ) ) . "]]></title>\n\r";
 	echo "    <link>" . admin_url( 'admin.php?page=' . WPSC_DIR_NAME . '/display-log.php' ) . "</link>\n\r";
-	echo "    <description>" . _x( 'This is the WP e-Commerce Product List RSS feed', 'XML Feed Description', 'wpsc' ) . "</description>\n\r";
-	echo "    <generator>" . _x( 'WP e-Commerce Plugin', 'XML Feed Generator', 'wpsc' ) . "</generator>\n\r";
+	echo "    <description>" . _x( 'This is the WP eCommerce Product List RSS feed', 'XML Feed Description', 'wp-e-commerce' ) . "</description>\n\r";
+	echo "    <generator>" . _x( 'WP eCommerce Plugin', 'XML Feed Generator', 'wp-e-commerce' ) . "</generator>\n\r";
 	echo "    <atom:link href='$self' rel='self' type='application/rss+xml' />\n\r";
 
 	$products = get_posts( $args );
 
-	while ( count ( $products ) ) {
+	while ( count( $products ) ) {
 
-		foreach ($products as $post) {
+		foreach ( $products as $post ) {
 
-			setup_postdata($post);
+			setup_postdata( $post );
 
-			$purchase_link = wpsc_product_url($post->ID);
+			$purchase_link = get_permalink($post->ID);
 
 			echo "    <item>\n\r";
 			if ($google_checkout_note) {
-				echo "      <g:payment_notes>" . _x( 'Google Wallet', 'Google Checkout Payment Notes in XML Feed', 'wpsc' ) . "</g:payment_notes>\n\r";
+				echo "      <g:payment_notes>" . _x( 'Google Wallet', 'Google Checkout Payment Notes in XML Feed', 'wp-e-commerce' ) . "</g:payment_notes>\n\r";
 			}
 			echo "      <title><![CDATA[".get_the_title()."]]></title>\n\r";
 			echo "      <link>$purchase_link</link>\n\r";
 			echo "      <description><![CDATA[".apply_filters ('the_content', get_the_content())."]]></description>\n\r";
-			echo "      <pubDate>".$post->post_modified_gmt."</pubDate>\n\r";
-			echo "      <guid>$purchase_link</guid>\n\r";
+
+			if ( 'google' === $xmlformat ) {
+
+				$sku  = get_post_meta( $post->ID, '_wpsc_sku', true );
+				$g_id = ! empty( $sku ) ? $sku : $post->ID;
+				$g_id = apply_filters( 'wpsc_google_product_feed_product_id', $g_id, $post );
+
+				if ( strlen( $g_id ) > 50 ) {
+					$g_id = substr( $g_id, 0, 50 );
+				}
+
+				echo "      <g:id>$g_id</g:id>\n\r";
+			} else {
+				echo "      <guid>$purchase_link</guid>\n\r";
+			}
 
 			$image_link = wpsc_the_product_thumbnail() ;
 
-			if ($image_link !== FALSE) {
+			if ( $image_link !== false ) {
 
 				if ( $xmlformat == 'google' ) {
 					echo "      <g:image_link><![CDATA[$image_link]]></g:image_link>\n\r";
@@ -137,18 +148,18 @@ function wpsc_generate_product_feed() {
 
 				echo "      <g:price>".$price."</g:price>\n\r";
 
-				$google_elements = Array ();
+				$google_elements = array();
 
 				$product_meta = get_post_custom ( $post->ID );
 
                 if ( is_array ( $product_meta ) ) {
 				    foreach ( $product_meta as $meta_key => $meta_value ) {
-					    if ( stripos($meta_key,'g:') === 0 )
-						    $google_elements[$meta_key] = $meta_value;
+					    if ( stripos( $meta_key, 'g:' ) === 0 )
+						    $google_elements[ $meta_key ] = $meta_value;
 				    }
                 }
 
-				$google_elements = apply_filters( 'wpsc_google_elements', array ( 'product_id' => $post->ID, 'elements' => $google_elements ) );
+				$google_elements = apply_filters( 'wpsc_google_elements', array( 'product_id' => $post->ID, 'elements' => $google_elements ) );
 				$google_elements = $google_elements['elements'];
 
 	            $done_condition = FALSE;

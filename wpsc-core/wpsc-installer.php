@@ -11,15 +11,15 @@ function wpsc_auto_update() {
 	wpsc_check_and_copy_files();
 
 	$wpsc_version = get_option( 'wpsc_version' );
-	$wpsc_minor_version = get_option( 'wspc_minor_version' );
+	$wpsc_minor_version = get_option( 'wpsc_minor_version' );
 
 	if ( $wpsc_version === false )
-		add_option( 'wpsc_version', WPSC_VERSION, '', 'yes' );
+		add_option( 'wpsc_version', WPSC_VERSION, '', 'no' );
 	else
 		update_option( 'wpsc_version', WPSC_VERSION );
 
 	if ( $wpsc_minor_version === false )
-		add_option( 'wpsc_minor_version', WPSC_MINOR_VERSION, '', 'yes' );
+		add_option( 'wpsc_minor_version', WPSC_MINOR_VERSION, '', 'no' );
 	else
 		update_option( 'wpsc_minor_version', WPSC_MINOR_VERSION );
 
@@ -43,24 +43,24 @@ function wpsc_install() {
 	// whether WPSC_TABLE_CART_CONTENTS exists. This is an unfortunate hack, but we can do away with
 	// it in 3.9 as we'll drop support for 3.7.x then
 	if ( $wpdb->get_var( "SHOW TABLES LIKE '" . WPSC_TABLE_CART_CONTENTS . "'" ) != WPSC_TABLE_CART_CONTENTS )
-		add_option( 'wpsc_db_version', WPSC_DB_VERSION, '', 'yes' );
+		add_option( 'wpsc_db_version', WPSC_DB_VERSION, '', 'no' );
 
 	// run the create or update code here.
 	wpsc_create_or_update_tables();
 	wpsc_create_upload_directories();
 
 	// All code to add new database tables and columns must be above here
-	$wpsc_version = get_option( 'wpsc_version', 0 );
-	$wpsc_minor_version = get_option( 'wspc_minor_version', 0 );
+	$wpsc_version       = get_option( 'wpsc_version', 0 );
+	$wpsc_minor_version = get_option( 'wpsc_minor_version', 0 );
 
 	if ( $wpsc_version === false ) {
-		add_option( 'wpsc_version', WPSC_VERSION, '', 'yes' );
+		add_option( 'wpsc_version', WPSC_VERSION, '', 'no' );
 	} else {
 		update_option( 'wpsc_version', WPSC_VERSION );
 	}
 
 	if ( $wpsc_minor_version === false )
-		add_option( 'wpsc_minor_version', WPSC_MINOR_VERSION, '', 'yes' );
+		add_option( 'wpsc_minor_version', WPSC_MINOR_VERSION, '', 'no' );
 	else
 		update_option( 'wpsc_minor_version', WPSC_MINOR_VERSION );
 
@@ -94,7 +94,7 @@ function wpsc_install() {
 		update_option('wpsc_enable_comments',0);
 
 	if('' == get_option('multi_add'))
-		update_option('multi_add',0);
+		update_option('multi_add',1);
 
 	if('' == get_option('hide_addtocart_button'))
 		update_option('hide_addtocart_button',0);
@@ -103,84 +103,181 @@ function wpsc_install() {
 		update_option('wpsc_addtocart_or_buynow',0);
 
 
-	add_option( 'show_thumbnails', 1, '', "yes" );
-	add_option( 'show_thumbnails_thickbox', 1, '', "yes" );
+	add_option( 'show_thumbnails', 1, '', 'no' );
+	add_option( 'show_thumbnails_thickbox', 1, '', 'no' );
 
-	add_option( 'product_list_url', '', '', 'yes' );
-	add_option( 'shopping_cart_url', '', '', 'yes' );
-	add_option( 'checkout_url', '', '', 'yes' );
-	add_option( 'transact_url', '', '', 'yes' );
-	add_option( 'payment_gateway', '','', 'yes' );
+	require_once( WPSC_FILE_PATH . '/wpsc-core/wpsc-functions.php' );
+	require_once( WPSC_FILE_PATH . '/wpsc-includes/wpsc-theme-engine-bootstrap.php' );
+
+	$te = get_option( 'wpsc_get_active_theme_engine', '1.0' );
+
+	if ( '1.0' == $te ) {
+		add_option( 'product_list_url', '', '', 'no' );
+		add_option( 'shopping_cart_url', '', '', 'no' );
+		add_option( 'checkout_url', '', '', 'no' );
+		add_option( 'transact_url', '', '', 'no' );
+		/*
+		 * This part creates the pages and automatically puts their URLs into the options page.
+		 * As you can probably see, it is very easily extendable, just pop in your page and the deafult content in the array and you are good to go.
+		 */
+		$post_date = date( "Y-m-d H:i:s" );
+		$post_date_gmt = gmdate( "Y-m-d H:i:s" );
+
+		$pages = array(
+			'products-page' => array(
+				'name' => 'products-page',
+				'title' => __( 'Products Page', 'wp-e-commerce' ),
+				'tag' => '[productspage]',
+				'option' => 'product_list_url'
+			),
+			'checkout' => array(
+				'name' => 'checkout',
+				'title' => __( 'Checkout', 'wp-e-commerce' ),
+				'tag' => '[shoppingcart]',
+				'option' => 'shopping_cart_url'
+			),
+			'transaction-results' => array(
+				'name' => 'transaction-results',
+				'title' => __( 'Transaction Results', 'wp-e-commerce' ),
+				'tag' => '[transactionresults]',
+				'option' => 'transact_url'
+			),
+			'your-account' => array(
+				'name' => 'your-account',
+				'title' => __( 'Your Account', 'wp-e-commerce' ),
+				'tag' => '[userlog]',
+				'option' => 'user_account_url'
+			)
+		);
+
+		//indicator. if we will create any new pages we need to flush.. :)
+		$newpages = false;
+
+		//get products page id. if there's no products page then create one
+		$products_page_id = $wpdb->get_var("SELECT id FROM `" . $wpdb->posts . "` WHERE `post_content` LIKE '%" . $pages['products-page']['tag'] . "%'	AND `post_type` != 'revision'");
+		if( empty($products_page_id) ){
+			$products_page_id = wp_insert_post( array(
+				'post_title' 	=>	$pages['products-page']['title'],
+				'post_type' 	=>	'page',
+				'post_name'		=>	$pages['products-page']['name'],
+				'comment_status'=>	'closed',
+				'ping_status' 	=>	'closed',
+				'post_content' 	=>	$pages['products-page']['tag'],
+				'post_status' 	=>	'publish',
+				'post_author' 	=>	1,
+				'menu_order'	=>	0
+			));
+			$newpages = true;
+		}
+		update_option( $pages['products-page']['option'], _get_page_link($products_page_id) );
+		//done. products page created. no we can unset products page data and create all other pages.
+
+		//unset products page
+		unset($pages['products-page']);
+
+		//create other pages
+		foreach( (array)$pages as $page ){
+			//check if page exists and get it's ID
+			$page_id = $wpdb->get_var("SELECT id FROM `" . $wpdb->posts . "` WHERE `post_content` LIKE '%" . $page['tag'] . "%'	AND `post_type` != 'revision'");
+			//if there's no page - create
+			if( empty($page_id) ){
+				$page_id = wp_insert_post( array(
+					'post_title' 	=>	$page['title'],
+					'post_type' 	=>	'page',
+					'post_name'		=>	$page['name'],
+					'comment_status'=>	'closed',
+					'ping_status' 	=>	'closed',
+					'post_content' 	=>	$page['tag'],
+					'post_status' 	=>	'publish',
+					'post_author' 	=>	1,
+					'menu_order'	=>	0,
+					'post_parent'	=>	$products_page_id
+				));
+				$newpages = true;
+			}
+			//update option
+			update_option( $page['option'], get_permalink( $page_id ) );
+			//also if this is shopping_cart, then update checkout url option
+			if ( $page['option'] == 'shopping_cart_url' )
+				update_option( 'checkout_url', get_permalink( $page_id ) );
+		}
+
+		//if we have created any new pages, then flush... do we need to do this? probably should be removed
+		if ( $newpages ) {
+			wp_cache_delete( 'all_page_ids', 'pages' );
+			wpsc_update_permalink_slugs();
+		}
+	}
+
+	add_option( 'payment_gateway', '','', 'no' );
 
 	$default_payment_gateways_names = array(
 		'chronopay'						=> '',
-		'google'						=> '',
 		'wpsc_merchant_paypal_express'	=> '',
 		'wpsc_merchant_paypal_pro'		=> '',
-		'wpsc_merchant_paypal_standard'	=> ''
+		'wpsc_merchant_paypal_standard'	=> '',
+		'amazon-payments'           	=> ''
 	);
+
 	$existing_payment_gateways_names = get_option( 'payment_gateway_names' );
-	$new_payment_gatewats_name = array_merge($default_payment_gateways_names, (array)$existing_payment_gateways_names);
-	update_option( 'payment_gateway_names', $new_payment_gatewats_name );
+
+	$new_payment_gateways_name = array_merge( $default_payment_gateways_names, (array) $existing_payment_gateways_names);
+	update_option( 'payment_gateway_names', $new_payment_gateways_name );
 
 
 	if ( function_exists( 'register_sidebar' ) )
-		add_option( 'cart_location', '4','', 'yes' );
+		add_option( 'cart_location', '4','', 'no' );
 	else
-		add_option( 'cart_location', '1', '', 'yes' );
+		add_option( 'cart_location', '1', '', 'no' );
 
-	add_option( 'currency_type', '156','', 'yes' );
-	add_option( 'currency_sign_location', '3', '', 'yes' );
+	add_option( 'currency_type', '136','', 'no' );
+	add_option( 'currency_sign_location', '3', '', 'no' );
 
-	add_option( 'gst_rate', '1','', 'yes' );
+	add_option( 'gst_rate', '1','', 'no' );
 
-	add_option( 'max_downloads', '1','', 'yes' );
+	add_option( 'max_downloads', '1','', 'no' );
 
-	add_option( 'display_pnp', '1', '', 'yes' );
+	add_option( 'display_pnp', '1', '', 'no' );
 
-	add_option( 'display_specials', '1', '', 'yes' );
-	add_option( 'do_not_use_shipping', '1', '', 'yes' );
+	add_option( 'display_specials', '1', '', 'no' );
+	add_option( 'do_not_use_shipping', '1', '', 'no' );
 
-	add_option( 'postage_and_packaging', '0','', 'yes' );
-    add_option( 'shipwire', '0', '', 'yes' );
+	add_option( 'postage_and_packaging', '0','', 'no' );
+    add_option( 'shipwire', '0', '', 'no' );
+    add_option( 'shipwire_test_server', '0', '', 'no' );
 
-	add_option( 'purch_log_email', '', '', 'yes' );
-	add_option( 'return_email', '', '', 'yes' );
-	add_option( 'terms_and_conditions', '', '', 'yes' );
+	add_option( 'purch_log_email', get_option( 'admin_email', '' ), '', 'no' );
+	add_option( 'return_email', '', '', 'no' );
+	add_option( 'terms_and_conditions', '', '', 'no' );
 
-	add_option( 'google_key', 'none', '', 'yes' );
-	add_option( 'google_id', 'none', '', 'yes' );
+	add_option( 'default_brand', 'none', '', 'no' );
+	add_option( 'wpsc_default_category', 'all', '', 'no' );
 
-	add_option( 'default_brand', 'none', '', 'yes' );
-	add_option( 'wpsc_default_category', 'all', '', 'yes' );
-
-	add_option( 'product_view', 'default', "", 'yes' );
+	add_option( 'product_view', 'default', "", 'no' );
 	add_option( 'add_plustax', 'default', "", '1' );
 
-
-	add_option( 'nzshpcrt_first_load', '0', "", 'yes' );
 
 	if ( !((get_option( 'show_categorybrands' ) > 0) && (get_option( 'show_categorybrands' ) < 3)) )
 		update_option( 'show_categorybrands', 2 );
 
 	// PayPal options
-	add_option( 'paypal_business', '', '', 'yes' );
-	add_option( 'paypal_url', '', '', 'yes' );
-	add_option( 'paypal_ipn', '1', '', 'yes' );
+	add_option( 'paypal_business', '', '', 'no' );
+	add_option( 'paypal_url', '', '', 'no' );
+	add_option( 'paypal_ipn', '1', '', 'no' );
 
 
-	add_option( 'paypal_multiple_business', '', '', 'yes' );
+	add_option( 'paypal_multiple_business', '', '', 'no' );
 
 	add_option( 'paypal_multiple_url', "https://www.paypal.com/cgi-bin/webscr" );
 
-	add_option( 'product_ratings', '0', '', 'yes' );
+	add_option( 'product_ratings', '0', '', 'no' );
 	add_option( 'wpsc_email_receipt', __( 'Thank you for purchasing with %shop_name%, any items to be shipped will be processed as soon as possible, any items that can be downloaded can be downloaded using the links on this page. All prices include tax and postage and packaging where applicable.
 You ordered these items:
-%product_list%%total_shipping%%total_price%', 'wpsc' ), '', 'yes' );
+%product_list%%total_shipping%%total_price%', 'wp-e-commerce' ), '', 'no' );
 
-	add_option( 'wpsc_email_admin', __( '%product_list%%total_shipping%%total_price%', 'wpsc' ), '','yes' );
+	add_option( 'wpsc_email_admin', __( '%product_list%%total_shipping%%total_price%', 'wp-e-commerce' ), '','no' );
 
-	add_option( 'wpsc_selected_theme', 'default', '', 'yes' );
+	add_option( 'wpsc_selected_theme', 'default', '', 'no' );
 
 	add_option( 'product_image_height', 148);
 	add_option( 'product_image_width', 148);
@@ -197,9 +294,9 @@ You ordered these items:
 	add_option( 'wpsc_thousands_separator', ',' );
 	add_option( 'wpsc_decimal_separator', '.' );
 
-	add_option( 'custom_gateway_options', array('wpsc_merchant_testmode'), '', 'yes' );
+	add_option( 'custom_gateway_options', array( 'wpsc_merchant_testmode' ), '', 'no' );
 
-	add_option( 'wpsc_category_url_cache', array(), '', 'yes' );
+	add_option( 'wpsc_category_url_cache', array(), '', 'no' );
 
 	// add in some default tax settings
 	add_option( 'wpec_taxes_inprice', 'exclusive' );
@@ -210,99 +307,6 @@ You ordered these items:
 
 	wpsc_product_files_htaccess();
 
-	/*
-	 * This part creates the pages and automatically puts their URLs into the options page.
-	 * As you can probably see, it is very easily extendable, just pop in your page and the deafult content in the array and you are good to go.
-	 */
-	$post_date = date( "Y-m-d H:i:s" );
-	$post_date_gmt = gmdate( "Y-m-d H:i:s" );
-
-	$pages = array(
-		'products-page' => array(
-			'name' => 'products-page',
-			'title' => __( 'Products Page', 'wpsc' ),
-			'tag' => '[productspage]',
-			'option' => 'product_list_url'
-		),
-		'checkout' => array(
-			'name' => 'checkout',
-			'title' => __( 'Checkout', 'wpsc' ),
-			'tag' => '[shoppingcart]',
-			'option' => 'shopping_cart_url'
-		),
-		'transaction-results' => array(
-			'name' => 'transaction-results',
-			'title' => __( 'Transaction Results', 'wpsc' ),
-			'tag' => '[transactionresults]',
-			'option' => 'transact_url'
-		),
-		'your-account' => array(
-			'name' => 'your-account',
-			'title' => __( 'Your Account', 'wpsc' ),
-			'tag' => '[userlog]',
-			'option' => 'user_account_url'
-		)
-	);
-
-	//indicator. if we will create any new pages we need to flush.. :)
-	$newpages = false;
-
-	//get products page id. if there's no products page then create one
-	$products_page_id = $wpdb->get_var("SELECT id FROM `" . $wpdb->posts . "` WHERE `post_content` LIKE '%" . $pages['products-page']['tag'] . "%'	AND `post_type` != 'revision'");
-	if( empty($products_page_id) ){
-		$products_page_id = wp_insert_post( array(
-			'post_title' 	=>	$pages['products-page']['title'],
-			'post_type' 	=>	'page',
-			'post_name'		=>	$pages['products-page']['name'],
-			'comment_status'=>	'closed',
-			'ping_status' 	=>	'closed',
-			'post_content' 	=>	$pages['products-page']['tag'],
-			'post_status' 	=>	'publish',
-			'post_author' 	=>	1,
-			'menu_order'	=>	0
-		));
-		$newpages = true;
-	}
-	update_option( $pages['products-page']['option'], _get_page_link($products_page_id) );
-	//done. products page created. no we can unset products page data and create all other pages.
-
-	//unset products page
-	unset($pages['products-page']);
-
-	require_once( WPSC_FILE_PATH . '/wpsc-core/wpsc-functions.php' );
-
-	//create other pages
-	foreach( (array)$pages as $page ){
-		//check if page exists and get it's ID
-		$page_id = $wpdb->get_var("SELECT id FROM `" . $wpdb->posts . "` WHERE `post_content` LIKE '%" . $page['tag'] . "%'	AND `post_type` != 'revision'");
-		//if there's no page - create
-		if( empty($page_id) ){
-			$page_id = wp_insert_post( array(
-				'post_title' 	=>	$page['title'],
-				'post_type' 	=>	'page',
-				'post_name'		=>	$page['name'],
-				'comment_status'=>	'closed',
-				'ping_status' 	=>	'closed',
-				'post_content' 	=>	$page['tag'],
-				'post_status' 	=>	'publish',
-				'post_author' 	=>	1,
-				'menu_order'	=>	0,
-				'post_parent'	=>	$products_page_id
-			));
-			$newpages = true;
-		}
-		//update option
-		update_option( $page['option'], get_permalink( $page_id ) );
-		//also if this is shopping_cart, then update checkout url option
-		if ( $page['option'] == 'shopping_cart_url' )
-			update_option( 'checkout_url', get_permalink( $page_id ) );
-	}
-
-	//if we have created any new pages, then flush... do we need to do this? probably should be removed
-	if ( $newpages ) {
-		wp_cache_delete( 'all_page_ids', 'pages' );
-		wpsc_update_permalink_slugs();
-	}
 	// Product categories, temporarily register them to create first default category if none exist
 	// @todo: investigate those require once lines and move them to right place (not from here, but from their original location, which seems to be wrong, since i cant access wpsc_register_post_types and wpsc_update_categorymeta here) - Vales <v.bakaitis@gmail.com>
 	wpsc_core_load_page_titles();
@@ -311,19 +315,21 @@ You ordered these items:
 	if ( count( $category_list ) == 0 ) {
 		require_once( WPSC_FILE_PATH . '/wpsc-includes/meta.functions.php' );
 
-		$new_category = wp_insert_term( __( 'Product Category', 'wpsc' ), 'wpsc_product_category', "parent=0" );
+		$new_category = wp_insert_term( __( 'Product Category', 'wp-e-commerce' ), 'wpsc_product_category', "parent=0" );
 		$category_id = $new_category['term_id'];
 		$term = get_term_by( 'id', $new_category['term_id'], 'wpsc_product_category' );
 		$url_name = $term->slug;
 
 		wpsc_update_categorymeta( $category_id, 'nice-name', $url_name );
-		wpsc_update_categorymeta( $category_id, 'description', __( "This is a description", 'wpsc' ) );
+		wpsc_update_categorymeta( $category_id, 'description', __( "This is a description", 'wp-e-commerce' ) );
 		wpsc_update_categorymeta( $category_id, 'image', '' );
 		wpsc_update_categorymeta( $category_id, 'fee', '0' );
 		wpsc_update_categorymeta( $category_id, 'active', '1' );
 		wpsc_update_categorymeta( $category_id, 'order', '0' );
 	}
+
 	flush_rewrite_rules( false );
+	wpsc_theme_engine_v2_activate();
 }
 
 function wpsc_product_files_htaccess() {
@@ -397,7 +403,7 @@ function wpsc_create_upload_directories() {
 		WPSC_USER_UPLOADS_DIR,
 		WPSC_CACHE_DIR,
 		WPSC_UPGRADES_DIR,
-		WPSC_THEMES_PATH
+		// WPSC_THEMES_PATH
 	);
 	foreach ( $folders as $folder ) {
 		wp_mkdir_p( $folder );
@@ -505,7 +511,7 @@ function wpsc_create_or_update_tables( $debug = false ) {
 				$existing_table_columns[] = $column_name;
 
 				$null_match = false;
-				if ( $existing_table_column['Null'] = 'NO' ) {
+				if ( 'NO' == $existing_table_column['Null'] ) {
 					if ( isset( $table_data['columns'][$column_name] ) && stristr( $table_data['columns'][$column_name], "NOT NULL" ) !== false ) {
 						$null_match = true;
 					}
@@ -587,7 +593,7 @@ function wpsc_create_or_update_tables( $debug = false ) {
 		update_option( 'wpsc_database_check', $template_hash );
 		return true;
 	} else {
-		return false;
+		return $failure_reasons;
 	}
 }
 
@@ -600,7 +606,7 @@ function wpsc_create_or_update_tables( $debug = false ) {
  * * @return boolean true on success, false on failure
  */
 function wpsc_add_currency_list() {
-	global $wpdb;
+	global $wpdb, $currency_sql;
 	require_once(WPSC_FILE_PATH . "/wpsc-updates/currency_list.php");
 	$currency_data = $wpdb->get_var( "SELECT COUNT(*) AS `count` FROM `" . WPSC_TABLE_CURRENCY_LIST . "`" );
 	if ( $currency_data == 0 ) {
@@ -712,26 +718,26 @@ function wpsc_add_checkout_fields() {
 
 	if ( isset( $data_forms[0] ) && $data_forms[0]['count'] == 0 ) {
 
-		$sql = " INSERT INTO `" . WPSC_TABLE_CHECKOUT_FORMS . "` ( `name`, `type`, `mandatory`, `display_log`, `default`, `active`, `checkout_order`, `unique_name`) VALUES ( '" . __( 'Your billing/contact details', 'wpsc' ) . "', 'heading', '0', '0', '1', '1', 1,''),
-	( '" . __( 'First Name', 'wpsc' ) . "', 'text', '1', '1', '1', '1', 2,'billingfirstname'),
-	( '" . __( 'Last Name', 'wpsc' ) . "', 'text', '1', '1', '1', '1', 3,'billinglastname'),
-	( '" . __( 'Address', 'wpsc' ) . "', 'address', '1', '0', '1', '1', 4,'billingaddress'),
-	( '" . __( 'City', 'wpsc' ) . "', 'city', '1', '0', '1', '1', 5,'billingcity'),
-	( '" . __( 'State', 'wpsc' ) . "', 'text', '0', '0', '1', '1', 6,'billingstate'),
-	( '" . __( 'Country', 'wpsc' ) . "', 'country', '1', '0', '1', '1', 7,'billingcountry'),
-	( '" . __( 'Postal Code', 'wpsc' ) . "', 'text', '0', '0', '1', '1', 8,'billingpostcode'),
-	( '" . __( 'Email', 'wpsc' ) . "', 'email', '1', '1', '1', '1', 9,'billingemail'),
-	( '" . __( 'Shipping Address', 'wpsc' ) . "', 'heading', '0', '0', '1', '1', 10,'delivertoafriend'),
-	( '" . __( 'First Name', 'wpsc' ) . "', 'text', '0', '0', '1', '1', 11,'shippingfirstname'),
-	( '" . __( 'Last Name', 'wpsc' ) . "', 'text', '0', '0', '1', '1', 12,'shippinglastname'),
-	( '" . __( 'Address', 'wpsc' ) . "', 'address', '0', '0', '1', '1', 13,'shippingaddress'),
-	( '" . __( 'City', 'wpsc' ) . "', 'city', '0', '0', '1', '1', 14,'shippingcity'),
-	( '" . __( 'State', 'wpsc' ) . "', 'text', '0', '0', '1', '1', 15,'shippingstate'),
-	( '" . __( 'Country', 'wpsc' ) . "', 'delivery_country', '0', '0', '1', '1', 16,'shippingcountry'),
-	( '" . __( 'Postal Code', 'wpsc' ) . "', 'text', '0', '0', '1', '1', 17,'shippingpostcode');";
+		$sql = " INSERT INTO `" . WPSC_TABLE_CHECKOUT_FORMS . "` ( `name`, `type`, `mandatory`, `display_log`, `default`, `active`, `checkout_order`, `unique_name`) VALUES ( '" . __( 'Your billing/contact details', 'wp-e-commerce' ) . "', 'heading', '0', '0', '1', '1', 1,''),
+	( '" . __( 'First Name', 'wp-e-commerce' ) . "', 'text', '1', '1', '1', '1', 2,'billingfirstname'),
+	( '" . __( 'Last Name', 'wp-e-commerce' ) . "', 'text', '1', '1', '1', '1', 3,'billinglastname'),
+	( '" . __( 'Address', 'wp-e-commerce' ) . "', 'address', '1', '0', '1', '1', 4,'billingaddress'),
+	( '" . __( 'City', 'wp-e-commerce' ) . "', 'city', '1', '0', '1', '1', 5,'billingcity'),
+	( '" . __( 'State', 'wp-e-commerce' ) . "', 'text', '0', '0', '1', '1', 6,'billingstate'),
+	( '" . __( 'Country', 'wp-e-commerce' ) . "', 'country', '1', '0', '1', '1', 7,'billingcountry'),
+	( '" . __( 'Postal Code', 'wp-e-commerce' ) . "', 'text', '0', '0', '1', '1', 8,'billingpostcode'),
+	( '" . __( 'Email', 'wp-e-commerce' ) . "', 'email', '1', '1', '1', '1', 9,'billingemail'),
+	( '" . __( 'Shipping Address', 'wp-e-commerce' ) . "', 'heading', '0', '0', '1', '1', 10,'delivertoafriend'),
+	( '" . __( 'First Name', 'wp-e-commerce' ) . "', 'text', '0', '0', '1', '1', 11,'shippingfirstname'),
+	( '" . __( 'Last Name', 'wp-e-commerce' ) . "', 'text', '0', '0', '1', '1', 12,'shippinglastname'),
+	( '" . __( 'Address', 'wp-e-commerce' ) . "', 'address', '0', '0', '1', '1', 13,'shippingaddress'),
+	( '" . __( 'City', 'wp-e-commerce' ) . "', 'city', '0', '0', '1', '1', 14,'shippingcity'),
+	( '" . __( 'State', 'wp-e-commerce' ) . "', 'text', '0', '0', '1', '1', 15,'shippingstate'),
+	( '" . __( 'Country', 'wp-e-commerce' ) . "', 'delivery_country', '0', '0', '1', '1', 16,'shippingcountry'),
+	( '" . __( 'Postal Code', 'wp-e-commerce' ) . "', 'text', '0', '0', '1', '1', 17,'shippingpostcode');";
 
 		$wpdb->query( $sql );
-		$wpdb->query( "INSERT INTO `" . WPSC_TABLE_CHECKOUT_FORMS . "` ( `name`, `type`, `mandatory`, `display_log`, `default`, `active`, `checkout_order`, `unique_name` ) VALUES ( '" . __( 'Phone', 'wpsc' ) . "', 'text', '1', '0', '', '1', '8','billingphone');" );
+		$wpdb->query( "INSERT INTO `" . WPSC_TABLE_CHECKOUT_FORMS . "` ( `name`, `type`, `mandatory`, `display_log`, `default`, `active`, `checkout_order`, `unique_name` ) VALUES ( '" . __( 'Phone', 'wp-e-commerce' ) . "', 'text', '0', '0', '', '1', '8','billingphone');" );
 	}
 }
 function wpsc_rename_checkout_column(){
@@ -766,24 +772,24 @@ function wpsc_3882_database_updates() {
 		return;
 
 	$unique_names = array(
-						'billingfirstname'  => __( 'First Name', 'wpsc' ),
-						'billinglastname'   => __( 'Last Name', 'wpsc' ),
-						'billingaddress'    => __( 'Address', 'wpsc' ),
-						'billingcity'       => __( 'City', 'wpsc' ),
-						'billingstate'      => __( 'State', 'wpsc' ),
-						'billingcountry'    => __( 'Country', 'wpsc' ),
-						'billingemail'      => __( 'Email', 'wpsc' ),
-						'billingphone'      => __( 'Phone', 'wpsc' ),
-						'billingpostcode'   => __( 'Postal Code', 'wpsc' ),
-						'delivertoafriend'  => __( 'Shipping Address', 'wpsc' ),
-						'shippingfirstname' => __( 'First Name', 'wpsc' ),
-						'shippinglastname'  => __( 'Last Name', 'wpsc' ),
-						'shippingaddress'   => __( 'Address', 'wpsc' ),
-						'shippingcity'      => __( 'City', 'wpsc' ),
-						'shippingstate'     => __( 'State', 'wpsc' ),
-						'shippingcountry'   => __( 'Country', 'wpsc' ),
-						'shippingpostcode'  => __( 'Postal Code', 'wpsc' ),
-					);
+		'billingfirstname'  => __( 'First Name', 'wp-e-commerce' ),
+		'billinglastname'   => __( 'Last Name', 'wp-e-commerce' ),
+		'billingaddress'    => __( 'Address', 'wp-e-commerce' ),
+		'billingcity'       => __( 'City', 'wp-e-commerce' ),
+		'billingstate'      => __( 'State', 'wp-e-commerce' ),
+		'billingcountry'    => __( 'Country', 'wp-e-commerce' ),
+		'billingemail'      => __( 'Email', 'wp-e-commerce' ),
+		'billingphone'      => __( 'Phone', 'wp-e-commerce' ),
+		'billingpostcode'   => __( 'Postal Code', 'wp-e-commerce' ),
+		'delivertoafriend'  => __( 'Shipping Address', 'wp-e-commerce' ),
+		'shippingfirstname' => __( 'First Name', 'wp-e-commerce' ),
+		'shippinglastname'  => __( 'Last Name', 'wp-e-commerce' ),
+		'shippingaddress'   => __( 'Address', 'wp-e-commerce' ),
+		'shippingcity'      => __( 'City', 'wp-e-commerce' ),
+		'shippingstate'     => __( 'State', 'wp-e-commerce' ),
+		'shippingcountry'   => __( 'Country', 'wp-e-commerce' ),
+		'shippingpostcode'  => __( 'Postal Code', 'wp-e-commerce' ),
+	);
 
 	// Check if any uniquenames are missing
 	$current_columns = array_filter( $wpdb->get_col( $wpdb->prepare( 'SELECT unique_name FROM ' . WPSC_TABLE_CHECKOUT_FORMS ) ) );
@@ -811,5 +817,18 @@ function wpsc_3882_database_updates() {
 
 	// Update option to database to indicate that we have patched this.
 	update_option( 'wpsc_version', '3.8.8.2' );
+}
 
+function wpsc_theme_engine_v2_activate() {
+	$path = WPSC_FILE_PATH . '/wpsc-components/theme-engine-v2';
+	require_once( $path . '/core.php' );
+	_wpsc_te_v2_includes();
+	wpsc_register_post_types();
+	flush_rewrite_rules( true );
+	update_option( 'transact_url', wpsc_get_checkout_url( 'results' ) );
+	WPSC_Settings::get_instance();
+	/**
+	 * Runs after the WPSC Theme engine V2 is activated
+	 */
+	do_action( 'wpsc_theme_engine_v2_activate' );
 }

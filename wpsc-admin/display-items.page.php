@@ -8,9 +8,7 @@
  * @since 3.7
  */
 
-
 require_once(WPSC_FILE_PATH . '/wpsc-admin/includes/products.php');
-
 
 /**
  * wpsc_additional_column_names function.
@@ -25,16 +23,16 @@ function wpsc_additional_column_names( $columns ){
 
 	$columns['cb']            = '<input type="checkbox" />';
 	$columns['image']         = '';
-	$columns['title']         = __('Name', 'wpsc');
-	$columns['weight']        = __('Weight', 'wpsc');
-	$columns['stock']         = __('Stock', 'wpsc');
-	$columns['price']         = __('Price', 'wpsc');
-	$columns['sale_price']    = __('Sale Price', 'wpsc');
-	$columns['SKU']           = __('SKU', 'wpsc');
-	$columns['cats']          = __('Categories', 'wpsc');
-	$columns['featured']      = __('Featured', 'wpsc');
+	$columns['title']         = __('Name', 'wp-e-commerce');
+	$columns['stock']         = __('Stock', 'wp-e-commerce');
+	$columns['price']         = __('Price', 'wp-e-commerce');
+	$columns['sale_price']    = __('Sale', 'wp-e-commerce');
+	$columns['SKU']           = __('SKU', 'wp-e-commerce');
+	$columns['weight']        = __('Weight', 'wp-e-commerce');
+	$columns['cats']          = __('Categories', 'wp-e-commerce');
+	$columns['featured']      = '<img src="' . WPSC_CORE_IMAGES_URL . '/black-star.png" alt="' . __( 'Featured', 'wp-e-commerce' ) . '" title="' . __( 'Featured', 'wp-e-commerce' ) . '">';
 	$columns['hidden_alerts'] = '';
-	$columns['date']          = __('Date', 'wpsc');
+	$columns['date']          = __('Date', 'wp-e-commerce');
 
 	return $columns;
 }
@@ -85,15 +83,16 @@ add_action( 'wpsc_manage_products_column_image', '_wpsc_manage_products_column_i
  * @param  int     $post_id Post ID
  * @param  boolean $has_variations Whether the product has variations
  *
- * @uses esc_html_e()           Safe HTML with translation
- * @uses get_post_meta()        Gets post meta given key and post_id
- * @uses maybe_unserialize()    Unserialize value only if it was serialized.
- * @uses wpsc_convert_weight()  Does weight conversions
- * @uses esc_html()             Makes sure things are safe
+ * @uses esc_html_e()                Safe HTML with translation
+ * @uses get_post_meta()             Gets post meta given key and post_id
+ * @uses maybe_unserialize()         Unserialize value only if it was serialized.
+ * @uses wpsc_convert_weight()       Does weight conversions
+ * @uses esc_html()                  Makes sure things are safe
+ * @uses wpsc_weight_unit_display()  Gets weight unit for display
  */
 function _wpsc_manage_products_column_weight( $post, $post_id, $has_variations ) {
 	if( $has_variations ) {
-		esc_html_e( 'N/A', 'wpsc' );
+		esc_html_e( 'N/A', 'wp-e-commerce' );
 		return;
 	}
 	$product_data = array();
@@ -117,22 +116,7 @@ function _wpsc_manage_products_column_weight( $post, $post_id, $has_variations )
 
 	$unit = $product_data['meta']['_wpsc_product_metadata']['weight_unit'];
 
-	switch( $unit ) {
-		case "pound":
-			$unit = __(" lbs.", "wpsc");
-		break;
-		case "ounce":
-			$unit = __(" oz.", "wpsc");
-		break;
-		case "gram":
-			$unit = __(" g", "wpsc");
-		break;
-		case "kilograms":
-		case "kilogram":
-			$unit = __(" kgs.", "wpsc");
-		break;
-	}
-	echo $weight.$unit;
+	echo $weight . wpsc_weight_unit_display( $unit );
 	echo '<div id="inline_' . $post->ID . '_weight" class="hidden">' . esc_html( $weight ) . '</div>';
 }
 add_action( 'wpsc_manage_products_column_weight', '_wpsc_manage_products_column_weight', 10, 3 );
@@ -155,7 +139,7 @@ function _wpsc_manage_products_column_stock( $post, $post_id, $has_variations ) 
 	$stock = get_post_meta( $post->ID, '_wpsc_stock', true );
 
 	if( $stock == '' )
-		$stock = __('N/A', 'wpsc');
+		$stock = __('N/A', 'wp-e-commerce');
 
 	if ( $has_variations ) {
 		echo '~ ' . wpsc_variations_stock_remaining( $post->ID );
@@ -238,7 +222,7 @@ add_action( 'wpsc_manage_products_column_sale_price', '_wpsc_manage_products_col
 function _wpsc_manage_products_column_sku( $post, $post_id ) {
 	$sku = get_post_meta( $post->ID, '_wpsc_sku', true );
 	if( $sku == '' )
-		$sku = __('N/A', 'wpsc');
+		$sku = __('N/A', 'wp-e-commerce');
 
 	echo $sku;
 	echo '<div id="inline_' . $post->ID . '_sku" class="hidden">' . esc_html( $sku ) . '</div>';
@@ -266,7 +250,7 @@ function _wpsc_manage_products_column_cats( $post, $post_id ) {
 			$out[] = "<a href='?post_type=wpsc-product&amp;wpsc_product_category={$c->slug}'> " . esc_html( sanitize_term_field( 'name', $c->name, $c->term_id, 'category', 'display' ) ) . "</a>";
 			echo join( ', ', $out );
 		} else {
-		_e('Uncategorized', 'wpsc');
+		_e('Uncategorized', 'wp-e-commerce');
 	}
 }
 add_action( 'wpsc_manage_products_column_cats', '_wpsc_manage_products_column_cats', 10, 2 );
@@ -285,15 +269,16 @@ add_action( 'wpsc_manage_products_column_cats', '_wpsc_manage_products_column_ca
  */
 function _wpsc_manage_products_column_featured( $post, $post_id ) {
 	$featured_product_url = wp_nonce_url( "index.php?wpsc_admin_action=update_featured_product&amp;product_id=$post->ID", 'feature_product_' . $post->ID);
+	if ( in_array( $post->ID, (array) get_option( 'sticky_products' ) ) ) {
+		$class = 'gold-star';
+		$title = __( 'Unmark as Featured', 'wp-e-commerce' );
+	} else {
+		$class = 'grey-star';
+		$title = __( 'Mark as Featured', 'wp-e-commerce' );
+	}
 	?>
-		<a class="wpsc_featured_product_toggle featured_toggle_<?php echo $post->ID; ?>" href='<?php echo $featured_product_url; ?>' >
-			<?php if ( in_array( $post->ID, (array)get_option( 'sticky_products' ) ) ) : ?>
-				<img class='gold-star' src='<?php echo WPSC_CORE_IMAGES_URL; ?>/gold-star.gif' alt='<?php _e( 'Unmark as Featured', 'wpsc' ); ?>' title='<?php _e( 'Unmark as Featured', 'wpsc' ); ?>' />
-			<?php else: ?>
-				<img class='grey-star' src='<?php echo WPSC_CORE_IMAGES_URL; ?>/grey-star.gif' alt='<?php _e( 'Mark as Featured', 'wpsc' ); ?>' title='<?php _e( 'Mark as Featured', 'wpsc' ); ?>' />
-			<?php endif; ?>
-		</a>
-	<?php
+	<a class="wpsc_featured_product_toggle featured_toggle_<?php echo $post->ID; ?> <?php echo esc_attr( $class ); ?>" href='<?php echo $featured_product_url; ?>' title="<?php echo esc_attr( $title ); ?>" ></a>
+<?php
 }
 add_action( 'wpsc_manage_products_column_featured', '_wpsc_manage_products_column_featured', 10, 2 );
 
@@ -420,7 +405,7 @@ function wpsc_cats_restrict_manage_posts() {
             // retrieve array of term objects per taxonomy
             // output html for taxonomy dropdown filter
             echo "<select name='$tax_slug' id='$tax_slug' class='postform'>";
-            echo "<option value=''>" . esc_html( sprintf( _x( 'Show All %s', 'Show all [category name]', 'wpsc' ), $tax_name ) ) . "</option>";
+            echo "<option value=''>" . esc_html( sprintf( _x( 'Show All %s', 'Show all [category name]', 'wp-e-commerce' ), $tax_name ) ) . "</option>";
             wpsc_cats_restrict_manage_posts_print_terms($tax_slug);
             echo "</select>";
         }
@@ -474,27 +459,59 @@ function wpsc_sortable_column_load() {
 	add_filter( 'request', 'wpsc_column_sql_orderby', 8 );
 }
 
-add_action( 'load-edit.php', 'wpsc_sortable_column_load' );
-add_action( 'restrict_manage_posts', 'wpsc_cats_restrict_manage_posts' );
-add_action( 'manage_wpsc-product_posts_custom_column', 'wpsc_additional_column_data', 10, 2 );
+/**
+ * Product List Exclude Child Categories
+ *
+ * When filtering the product list by category in the admin this ensures that
+ * only products in the selected category are shown, not any of it's sub-categories.
+ *
+ * @param object $query WP_Query
+ *
+ * @uses get_current_screen()
+ */
+function wpsc_product_list_exclude_child_categories( $query ) {
+
+	if ( ! is_admin() || ( defined( 'DOING_AJAX' ) && DOING_AJAX ) || ! $query->is_main_query() )
+		return;
+
+	if ( 'edit-wpsc-product' == get_current_screen()->id ) {
+		$wpsc_product_category = $query->get( 'wpsc_product_category' );
+		if ( ! empty( $wpsc_product_category ) ) {
+			$category_query = array(
+					'taxonomy'         => 'wpsc_product_category',
+					'field'            => 'slug',
+					'terms'            => array( $wpsc_product_category ),
+					'include_children' => false,
+					'operator'         => 'IN'
+			);
+			$query->set( 'tax_query', array( $category_query ) );
+			$query->tax_query->queries = $query->get( 'tax_query' );
+		}
+	}
+}
+
+add_action( 'pre_get_posts', 'wpsc_product_list_exclude_child_categories', 15 );
+
+add_action( 'load-edit.php'                            , 'wpsc_sortable_column_load' );
+add_action( 'restrict_manage_posts'                    , 'wpsc_cats_restrict_manage_posts' );
+add_action( 'manage_wpsc-product_posts_custom_column'  , 'wpsc_additional_column_data', 10, 2 );
 add_filter( 'manage_edit-wpsc-product_sortable_columns', 'wpsc_additional_sortable_column_names' );
-add_filter( 'manage_edit-wpsc-product_columns', 'wpsc_additional_column_names' );
-add_filter( 'manage_wpsc-product_posts_columns', 'wpsc_additional_column_names' );
+add_filter( 'manage_edit-wpsc-product_columns'         , 'wpsc_additional_column_names' );
+add_filter( 'manage_wpsc-product_posts_columns'        , 'wpsc_additional_column_names' );
 
 
 
 /**
- * wpsc_update_featured_products function.
+ * Update featured prodcuts using AJAX.
  *
  * @access public
- * @todo Should be refactored to e
  * @return void
  *
- * @uses check_admin_referrer()     Makes sure that a user was referred from another admin page.
- * @uses get_option()               Gets option from the WordPress database
- * @uses update_option()            Updates an option in the WordPress database
- * @uses wp_redirect()              Redirects to another page.
- * @uses wp_get_referrer()          Retrieve referer from '_wp_http_referer' or HTTP referer.
+ * @uses check_admin_referer()     Makes sure that a user was referred from another admin page.
+ * @uses get_option()              Gets option from the WordPress database
+ * @uses update_option()           Updates an option in the WordPress database
+ * @uses wp_redirect()             Redirects to another page.
+ * @uses wp_get_referer()          Retrieve referer from '_wp_http_referer' or HTTP referer.
  */
 function wpsc_update_featured_products() {
 	if ( ! ( defined( 'DOING_AJAX' ) && DOING_AJAX ) &&
@@ -521,14 +538,16 @@ function wpsc_update_featured_products() {
 		$status = array_values( $status );
 	}
 
-	update_option( 'sticky_products', $status );
+	$update	= update_option( 'sticky_products', $status );
+
+	do_action( 'wpsc_after_featured_product_update', $update, $status );
 
 	if ( defined( 'DOING_AJAX' ) && DOING_AJAX ) {
 		$json_response = array(
-			'text'       => $new_status ? esc_attr__( 'Unmark as Featured', 'wpsc' ) : esc_attr__( 'Mark as Featured', 'wpsc' ),
+			'text'       => $new_status ? esc_attr__( 'Unmark as Featured', 'wp-e-commerce' ) : esc_attr__( 'Mark as Featured', 'wp-e-commerce' ),
 			'product_id' => $product_id,
-			'class'      => $new_status ? 'gold-star' : 'grey-star',
-			'image'      => $new_status ? WPSC_CORE_IMAGES_URL . '/gold-star.gif' : WPSC_CORE_IMAGES_URL . '/grey-star.gif'
+			'color'      => $new_status ? 'gold-star' : 'grey-star',
+			'image'      => $new_status ? WPSC_CORE_IMAGES_URL . '/gold-star.png' : WPSC_CORE_IMAGES_URL . '/grey-star.png'
 		);
 
 		echo json_encode( $json_response );
@@ -537,10 +556,9 @@ function wpsc_update_featured_products() {
 	}
 	wp_redirect( wp_get_referer() );
 	exit;
-
 }
 
-add_filter( 'page_row_actions','my_action_row', 10, 2 );
+add_filter( 'page_row_actions','wpsc_action_row', 10, 2 );
 
 /**
  * @param $actions
@@ -552,7 +570,7 @@ add_filter( 'page_row_actions','my_action_row', 10, 2 );
  * @uses esc_url()              Makes sure the URL is safe, we like safe
  * @uses esc_html_x()           Displays translated string with gettext context
  */
-function my_action_row( $actions, $post ) {
+function wpsc_action_row( $actions, $post ) {
 
 	if ( $post->post_type != "wpsc-product" )
 			return $actions;
@@ -560,7 +578,7 @@ function my_action_row( $actions, $post ) {
 	$url = admin_url( 'edit.php' );
 	$url = add_query_arg( array( 'wpsc_admin_action' => 'duplicate_product', 'product' => $post->ID ), $url );
 
-    $actions['duplicate'] = '<a href="'.esc_url( $url ).'">' . esc_html_x( 'Duplicate', 'row-actions', 'wpsc' ) . '</a>';
+    $actions['duplicate'] = '<a href="'.esc_url( $url ).'">' . esc_html_x( 'Duplicate', 'row-actions', 'wp-e-commerce' ) . '</a>';
 	return $actions;
 }
 

@@ -6,7 +6,7 @@
  * @access public
  * @param mixed $price_in
  * @param mixed $args
- * @return void
+ * @return string
  */
 function wpsc_currency_display( $price_in, $args = null ) {
 	global $wpdb;
@@ -32,27 +32,30 @@ function wpsc_currency_display( $price_in, $args = null ) {
 	// Format the price for output
 	$price_out = wpsc_format_number( $price_in, $decimals );
 
-	if ( ! $query['isocode'] ) {
-		// Get currency settings
-		$currency_type = get_option( 'currency_type' );
+	// Get currency settings
+	$currency_type = get_option( 'currency_type' );
 
+	if ( ! $query['isocode'] ) {
+		// @todo: can deprecate this caching because the WPSC_Countries class already caches the data
 		if ( ! $wpsc_currency_data = wp_cache_get( $currency_type, 'wpsc_currency_id' ) ) {
-			$wpsc_currency_data = $wpdb->get_row( $wpdb->prepare( "SELECT `symbol`, `symbol_html`, `code` FROM `" . WPSC_TABLE_CURRENCY_LIST . "` WHERE `id` = %d LIMIT 1", $currency_type ), ARRAY_A );
+			$wpsc_currency_data = WPSC_Countries::get_currency_data( $currency_type, true );
 			wp_cache_set( $currency_type, $wpsc_currency_data, 'wpsc_currency_id' );
 		}
 	} elseif ( ! $wpsc_currency_data = wp_cache_get( $query['isocode'], 'wpsc_currency_isocode' ) ) {
-		$wpsc_currency_data = $wpdb->get_row( $wpdb->prepare( "SELECT `symbol`, `symbol_html`, `code` FROM `" . WPSC_TABLE_CURRENCY_LIST . "` WHERE `isocode` = %s LIMIT 1", $query['isocode'] ), ARRAY_A );
+		$wpsc_currency_data = WPSC_Countries::get_currency_data( $query['isocode'], true );
 		wp_cache_set( $query['isocode'], $wpsc_currency_data, 'wpsc_currency_isocode' );
 	}
 
 	// Figure out the currency code
-	if ( $query['display_currency_code'] )
+	if ( $query['display_currency_code'] ) {
 		$currency_code = $wpsc_currency_data['code'];
+	}
 
 	// Figure out the currency sign
 	$currency_sign = '';
+
 	if ( $query['display_currency_symbol'] ) {
-		if ( !empty( $wpsc_currency_data['symbol'] ) ) {
+		if ( ! empty( $wpsc_currency_data['symbol'] ) ) {
 			if ( $query['display_as_html'] && !empty($wpsc_currency_data['symbol_html']) ) {
 				$currency_sign = $wpsc_currency_data['symbol_html'];
 			} else {
@@ -100,41 +103,62 @@ function wpsc_currency_display( $price_in, $args = null ) {
 }
 
 /**
-	* wpsc_decrement_claimed_stock method
-	*
-	* @param float a price
-	* @return string a price with a currency sign
-*/
-function wpsc_decrement_claimed_stock($purchase_log_id) {
-	global $wpdb;
+ * wpsc_decrement_claimed_stock method
+ *
+ * @param float a price
+ * @return string a price with a currency sign
+ */
+function wpsc_decrement_claimed_stock( $purchase_log_id ) {
 
-	//processed
-	$all_claimed_stock = $wpdb->get_results( $wpdb->prepare( "SELECT `cs`.`product_id`, `cs`.`stock_claimed`, `pl`.`id`, `pl`.`processed` FROM `" . WPSC_TABLE_CLAIMED_STOCK . "` `cs` JOIN `" . WPSC_TABLE_PURCHASE_LOGS . "` `pl` ON `cs`.`cart_id` = `pl`.`id` WHERE `cs`.`cart_id` = '%s'", $purchase_log_id ) );
+	// Processed
+	$claimed_query = new WPSC_Claimed_Stock( array( 'cart_id' => $purchase_log_id ) );
+	$all_claimed_stock = $claimed_query->get_purchase_log_claimed_stock();
 
-	if( !empty( $all_claimed_stock ) ){
-		switch($all_claimed_stock[0]->processed){
+	do_action( 'wpsc_pre_decrement_claimed_stock', $purchase_log_id, $claimed_query );
+
+	if ( ! empty( $all_claimed_stock ) ) {
+
+		do_action( 'wpsc_decrement_claimed_stock_' . $all_claimed_stock[0]->processed, $purchase_log_id, $claimed_query );
+		do_action( 'wpsc_decrement_claimed_stock', $purchase_log_id, $claimed_query );
+
+		switch( $all_claimed_stock[0]->processed ) {
 			case 3:
 			case 4:
 			case 5:
-				foreach((array)$all_claimed_stock as $claimed_stock) {
-					$product = get_post($claimed_stock->product_id);
-					$current_stock = get_post_meta($product->ID, '_wpsc_stock', true);
+				foreach ( (array) $all_claimed_stock as $claimed_stock ) {
+					
+					$product         = get_post( $claimed_stock->product_id );
+					$current_stock   = get_post_meta( $product->ID, '_wpsc_stock', true );
 					$remaining_stock = $current_stock - $claimed_stock->stock_claimed;
-					update_product_meta($product->ID, 'stock', $remaining_stock);
-					$product_meta = get_product_meta($product->ID,'product_metadata',true);
-					if( $remaining_stock < 1 ) {
-						// this is to make sure after upgrading to 3.8.9, products will have
-						// "notify_when_none_left" enabled by default if "unpublish_when_none_left"
-						// is enabled.
-						if ( ! isset( $product_meta['notify_when_none_left'] ) ) {
-							$product_meta['unpublish_when_none_left'] = 0;
-							if ( ! empty( $product_meta['unpublish_when_none_left'] ) ) {
-								$product_meta['unpublish_when_none_left'] = 1;
-								update_product_meta( $product->ID, 'product_metadata', $product_meta );
-							}
-						}
 
-						$email_message = sprintf( __( 'The product "%s" is out of stock.', 'wpsc' ), $product->post_title );
+					update_product_meta( $product->ID, 'stock', $remaining_stock );
+
+					$product_meta = get_product_meta( $product->ID, 'product_metadata', true );
+					
+					$parent_id = wpsc_product_is_variation( $product->ID );
+
+					if( $parent_id ) {
+						// If product is a variatio get the notification threshold from parent product
+						$parent_meta = get_product_meta( $parent_id, 'product_metadata', true );
+						$notify_limit = $parent_meta['stock_limit_notify'];
+					} else {
+						$notify_limit = $product_meta['stock_limit_notify'];
+					}
+					
+					if ( $notify_limit != 0 && $remaining_stock <= apply_filters( 'wpec_stock_limit_notify', $notify_limit ) ) {
+						// Check if notification has been sent
+						$notify_sent = get_product_meta( $product->ID, 'stock_limit_notify_sent', true );
+						
+						if( empty( $notify_sent ) ) {
+							$email_message = sprintf( __( 'The product "%s" has reached stock level "%s".', 'wp-e-commerce' ), $product->post_title, $remaining_stock );
+							
+							wp_mail( get_option('purch_log_email'), sprintf(__('%s is low on stock', 'wp-e-commerce'), $product->post_title), $email_message );
+							update_product_meta( $product->ID, 'stock_limit_notify_sent', true );							
+						}
+					}
+					
+					if ( $remaining_stock < 1 ) {
+						$email_message = sprintf( __( 'The product "%s" is out of stock.', 'wp-e-commerce' ), $product->post_title );
 
 						if ( ! empty( $product_meta["unpublish_when_none_left"] ) ) {
 							$result = wp_update_post( array(
@@ -142,19 +166,20 @@ function wpsc_decrement_claimed_stock($purchase_log_id) {
 								'post_status' => 'draft',
 							) );
 
-							if ( $result )
-								$email_message = __( 'The product "%s" is out of stock and has been unpublished.', 'wpsc' );
+							if ( $result ) {
+								$email_message = sprintf( __( 'The product "%s" is out of stock and has been unpublished.', 'wp-e-commerce' ), $product->post_title );
+								wp_mail( get_option('purch_log_email'), sprintf(__('%s is out of stock', 'wp-e-commerce'), $product->post_title), $email_message );
+							}
 						}
-
-						if ( $product_meta["notify_when_none_left"] == 1 )
-							wp_mail(get_option('purch_log_email'), sprintf(__('%s is out of stock', 'wpsc'), $product->post_title), $email_message );
 					}
 				}
 			case 6:
-				$wpdb->query( $wpdb->prepare( "DELETE FROM `".WPSC_TABLE_CLAIMED_STOCK."` WHERE `cart_id` IN (%s)", $purchase_log_id ) );
+				$claimed_query = new WPSC_Claimed_Stock( array( 'cart_id' => $purchase_log_id ) );
+				$claimed_query->clear_claimed_stock( 0 );
 				break;
 		}
 	}
+
 }
 
 /**
@@ -163,10 +188,19 @@ function wpsc_decrement_claimed_stock($purchase_log_id) {
  *  @return returns the currency symbol used for the shop
 */
 function wpsc_get_currency_symbol(){
-	global $wpdb;
-	$currency_type = get_option('currency_type');
-	$wpsc_currency_data = $wpdb->get_var( $wpdb->prepare( "SELECT `symbol` FROM `".WPSC_TABLE_CURRENCY_LIST."` WHERE `id` = %d LIMIT 1", $currency_type ) );
+	$currency_type = get_option( 'currency_type' );
+	$wpsc_currency_data = WPSC_Countries::get_currency_symbol( $currency_type );
 	return $wpsc_currency_data;
+}
+
+/**
+ *	wpsc_get_currency_code
+ *
+ *	@param does not receive anything
+ *  @return returns the currency code used for the shop
+*/
+function wpsc_get_currency_code(){
+	return WPSC_Countries::get_currency_code( get_option( 'currency_type' ) );
 }
 
 /**
@@ -177,13 +211,15 @@ function wpsc_get_currency_symbol(){
 function admin_display_total_price($start_timestamp = '', $end_timestamp = '') {
   global $wpdb;
 
-   if( ( $start_timestamp != '' ) && ( $end_timestamp != '' ) )
-	$sql = $wpdb->prepare( "SELECT SUM(`totalprice`) FROM `".WPSC_TABLE_PURCHASE_LOGS."` WHERE `processed` IN (2,3,4,5) AND `date` BETWEEN %s AND %s", $start_timestamp, $end_timestamp );
-    else
-	$sql = "SELECT SUM(`totalprice`) FROM `".WPSC_TABLE_PURCHASE_LOGS."` WHERE `processed` IN (2,3,4,5) AND `date` != ''";
+   $statii = _wpsc_get_completed_purchase_status_text();
+   if( ( $start_timestamp != '' ) && ( $end_timestamp != '' ) ) {
+	   $sql = $wpdb->prepare( "SELECT SUM(`totalprice`) FROM `" . WPSC_TABLE_PURCHASE_LOGS . "` WHERE `processed` IN ($statii) AND `date` BETWEEN %s AND %s", $start_timestamp, $end_timestamp );
+   } else {
+	   $sql = "SELECT SUM(`totalprice`) FROM `" . WPSC_TABLE_PURCHASE_LOGS . "` WHERE `processed` IN ($statii) AND `date` != ''";
+   }
 
-    $total = $wpdb->get_var($sql);
-  return $total;
+   $total = $wpdb->get_var($sql);
+   return $total;
 }
 
 function wpsc_get_mimetype($file, $check_reliability = false) {
@@ -196,59 +232,89 @@ function wpsc_get_mimetype($file, $check_reliability = false) {
 		$mimetype = false;
 		$is_reliable = false;
 	}
-	if($check_reliability == true) {
+
+	if ( $check_reliability ) {
 		return array('mime_type' => $mimetype, 'is_reliable' => $is_reliable );
 	} else {
 		return $mimetype;
 	}
 }
 
-function wpsc_convert_weight($in_weight, $in_unit, $out_unit = 'pound', $raw = false) {
-	switch($in_unit) {
+function wpsc_convert_weight( $in_weight, $in_unit, $out_unit = 'pound', $raw = false ) {
+
+	// first unit in each case block is the definitive unit name
+	// other unit names are used when doing imports from CSV
+
+	// convert $in_weight to grams, then convert that to whatever else.
+
+	switch( strtolower( $in_unit ) ) {
 		case "kilogram":
-		$intermediate_weight = $in_weight * 1000;
-		break;
+		case "kilograms":
+		case "kg":
+		case "kgs":
+			$intermediate_weight = $in_weight * 1000;
+			break;
 
 		case "gram":
-		$intermediate_weight = $in_weight;
-		break;
+		case "grams":
+		case "g":
+		case "gs":
+			$intermediate_weight = $in_weight;
+			break;
 
-		case "once":
 		case "ounce":
-		$intermediate_weight = ($in_weight / 16) * 453.59237;
-		break;
+		case "once":
+		case "ounces":
+		case "oz":
+			$intermediate_weight = ( $in_weight / 16 ) * 453.59237;
+			break;
 
 		case "pound":
+		case "pounds":
+		case "lb":
+		case "lbs":
 		default:
-		$intermediate_weight = $in_weight * 453.59237;
-		break;
+			$intermediate_weight = $in_weight * 453.59237;
+			break;
 	}
 
-	switch($out_unit) {
+	switch( strtolower( $out_unit ) ) {
 		case "kilogram":
-		$weight = $intermediate_weight / 1000;
-		break;
+		case "kilograms":
+		case "kg":
+		case "kgs":
+			$weight = $intermediate_weight / 1000;
+			break;
 
 		case "gram":
-		$weight = $intermediate_weight;
-		break;
+		case "grams":
+		case "g":
+		case "gs":
+			$weight = $intermediate_weight;
+			break;
 
-		case "once":
 		case "ounce":
-		$weight = ($intermediate_weight / 453.59237) * 16;
-		break;
+		case "once":
+		case "ounces":
+		case "oz":
+			$weight = ( $intermediate_weight / 453.59237 ) * 16;
+			break;
 
 		case "pound":
+		case "pounds":
+		case "lb":
+		case "lbs":
 		default:
-		$weight = $intermediate_weight / 453.59237;
-		break;
+			$weight = $intermediate_weight / 453.59237;
+			break;
 	}
-	if($raw)
+	if ( $raw )
 		return $weight;
-	return round($weight, 2);
+
+	return round( $weight, 2 );
 }
 
-function wpsc_ping_services( $post_id ) {
+function wpsc_ping_services() {
 	wp_schedule_single_event( time(), 'do_wpsc_pings' );
 }
 
@@ -282,12 +348,6 @@ function wpsc_send_ping($server) {
 	}
 }
 
-
-function wpsc_sanitise_keys($value) {
-  /// Function used to cast array items to integer.
-  return (int)$value;
-}
-
 add_action( 'publish_wpsc-product', 'wpsc_ping_services' );
 add_action( 'do_wpsc_pings', 'wpsc_ping' );
 
@@ -311,7 +371,7 @@ function wpsc_check_stock($state, $product) {
 
 		if( $out_of_stock === true ) {
 			$state['state'] = true;
-			$state['messages'][] = __( 'This product has no available stock', 'wpsc' );
+			$state['messages'][] = __( 'This product has no available stock', 'wp-e-commerce' );
 		}
 	}else{
 		$no_stock = $wpdb->get_col('
@@ -332,16 +392,15 @@ function wpsc_check_stock($state, $product) {
 			AND
 			`pm`.`meta_value` = "0"
 	');
-		if( !empty( $no_stock ) ){
-			$state['state'] = true;
-			$state['messages'][] = __( 'One or more of this products variations are out of stock.', 'wpsc' );
+
+		if ( ! empty( $no_stock ) ) {
+			$state['state']      = true;
+			$state['messages'][] = __( 'One or more of this products variations are out of stock.', 'wp-e-commerce' );
 		}
-
-
 	}
+
 	return array( 'state' => $state['state'], 'messages' => $state['messages'] );
 }
-
 
 /*
  * if UPS is on, this function checks every product on the products page to see if it has a weight
@@ -354,6 +413,11 @@ function wpsc_check_weight($state, $product) {
 	$shipping_modules = array();
 	$product_meta = get_product_meta( $product->ID, 'product_metadata',true );
 	if(! $product->post_parent && wpsc_product_has_children($product->ID)) return $state;
+	
+	if ( get_option( 'do_not_use_shipping' ) ) {
+		return $state;
+	}
+	
 	// only do anything if UPS is on and shipping is used
 	if( array_search( 'ups', $custom_shipping ) !== false )
 		$shipping_modules[] = 'UPS';
@@ -362,13 +426,14 @@ function wpsc_check_weight($state, $product) {
 	if( array_search( 'usps', $custom_shipping ) !== false )
 		$shipping_modules[] = 'Weight Rate';
 
-	if( empty( $product_meta['no_shipping'] ) && !empty( $shipping_modules ) ) {
-		if( $product_meta['weight'] == 0 ) // otherwise, use the weight from the products list table
+	if ( empty( $product_meta['no_shipping'] ) && !empty( $shipping_modules ) ) {
+
+		if ( ! isset( $product_meta['weight'] ) || ( isset( $product_meta['weight'] ) && $product_meta['weight'] == 0 ) ) // otherwise, use the weight from the products list table
 			$has_no_weight = true;
 
 		if( $has_no_weight === true ) {
 			$state['state'] = true;
-			$state['messages'][] = implode( ',',$shipping_modules ). __(' does not support products without a weight set. Please either disable shipping for this product or give it a weight', 'wpsc' );
+			$state['messages'][] = implode( ',',$shipping_modules ). __(' does not support products without a weight set. Please either disable shipping for this product or give it a weight', 'wp-e-commerce' );
 		}
 	}
 	return array( 'state' => $state['state'], 'messages' => $state['messages'] );
@@ -376,8 +441,6 @@ function wpsc_check_weight($state, $product) {
 
 add_filter('wpsc_product_alert', 'wpsc_check_stock', 10, 2);
 add_filter('wpsc_product_alert', 'wpsc_check_weight', 10, 2);
-
-
 
 /**
  * WPSC Image Quality
@@ -398,4 +461,3 @@ function wpsc_image_quality( $quality = 75 ) {
 	$quality = apply_filters( 'jpeg_quality', $quality );
 	return apply_filters( 'wpsc_jpeg_quality', $quality );
 }
-?>
